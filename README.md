@@ -2,12 +2,6 @@
 # Options Calculator
 
 <div align="center">
-  
-### 금융 시장을 위한 최고의 옵션 분석 도구
-
-[![Stars](https://img.shields.io/badge/Stars-⭐⭐⭐⭐⭐-yellow)](https://github.com/parkminhyung/Option_Calculator)
-[![Version](https://img.shields.io/badge/Version-1.0.0-blue)](https://github.com/parkminhyung/Option_Calculator/releases)
-[![License](https://img.shields.io/badge/License-MIT-green)](https://opensource.org/licenses/MIT)
 
 **[한국어](#한국어) | [English](#english) | [中文](#中文) | [日本語](#日本語)**
 
