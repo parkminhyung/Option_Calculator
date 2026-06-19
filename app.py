@@ -1,18 +1,16 @@
-import streamlit as st
-import pandas as pd
 import numpy as np
-import yfinance as yf
+import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
+from models.bs_model import bs_model, calculate_implied_volatility
 from plotly.subplots import make_subplots
+from strategies.payoff import calculate_payoff_df
+from strategies.probability import calculate_itm_probability, calculate_win_rate
+from utils.data_fetcher import fetch_data, get_option_chain
+from utils.date_utils import calculate_days_to_expiry
 
 # 모듈 임포트
 from utils.style import apply_page_styles, apply_parameter_styles
-from utils.data_fetcher import fetch_data, get_option_chain
-from utils.date_utils import calculate_days_to_expiry
-from models.bs_model import bs_model, calculate_implied_volatility
-from models.greeks import option_greeks
-from strategies.payoff import calculate_payoff_df
-from strategies.probability import calculate_price_probability, calculate_itm_probability, calculate_win_rate
 from visualizations.strategy_plot import plot_option_strategy
 
 
@@ -25,7 +23,9 @@ def bounded_index(index, length):
 def render_leg_label(sign, instrument, strike_label=None, quantity=None):
     css_class = "positive" if sign == "+" else "negative"
     qty_text = f"{quantity}x " if quantity else ""
-    strike_text = f"<span class='leg-strike'>{strike_label}</span>" if strike_label else ""
+    strike_text = (
+        f"<span class='leg-strike'>{strike_label}</span>" if strike_label else ""
+    )
 
     st.markdown(
         f"""
@@ -42,31 +42,34 @@ def render_leg_label(sign, instrument, strike_label=None, quantity=None):
 def main():
     # 페이지 설정
     apply_page_styles()
-    
+
     # Initialize session state variables for plot storage
-    if 'plot_fig' not in st.session_state:
+    if "plot_fig" not in st.session_state:
         st.session_state.plot_fig = None
-    if 'strategy_info' not in st.session_state:
+    if "strategy_info" not in st.session_state:
         st.session_state.strategy_info = None
-    if 'df' not in st.session_state:
+    if "df" not in st.session_state:
         st.session_state.df = None
     # Initialize plot parameter storage
-    if 'plot_side' not in st.session_state:
+    if "plot_side" not in st.session_state:
         st.session_state.plot_side = None
-    if 'plot_option_type' not in st.session_state:
+    if "plot_option_type" not in st.session_state:
         st.session_state.plot_option_type = None
-    if 'plot_strategy' not in st.session_state:
+    if "plot_strategy" not in st.session_state:
         st.session_state.plot_strategy = None
-    
+
     # Sidebar header
     st.sidebar.title("Option Calculator")
-    
+
     # Ticker input - only fetch on Enter or button click
-    ticker = st.sidebar.text_input("Enter Ticker Symbol:", "AAPL", key="ticker_input").upper()
+    ticker = st.sidebar.text_input(
+        "Enter Ticker Symbol:", "AAPL", key="ticker_input"
+    ).upper()
     fetch_button = st.sidebar.button("Fetch Data")
-    
+
     # Add JavaScript to detect Enter key in the ticker input
-    st.markdown("""
+    st.markdown(
+        """
     <script>
     const input = document.querySelector('input[data-testid="stTextInput"]');
     if (input) {
@@ -88,32 +91,38 @@ def main():
         });
     }
     </script>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     # Display company information if data is available
     if "data" in st.session_state:
         data = st.session_state.data
-        
+
         # Company info and metrics in a clean layout
         with st.container():
             # Company name and sector
-            st.markdown(f"""
+            st.markdown(
+                f"""
                 <h1 style='margin: 0; padding: 0; font-size: 3.5rem; font-weight: 300; 
                             color: #1E88E5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", 
                             Roboto, Helvetica, Arial, sans-serif; margin-bottom: 0.2rem;'>
-                    {data['name']} <span style='font-size: 1.4rem; color: #666;'>({ticker})</span>
+                    {data["name"]} <span style='font-size: 1.4rem; color: #666;'>({ticker})</span>
                 </h1>
-                <div style='font-size: 1.0rem; color: #666; margin-bottom: 0.8rem;'>{data['sector']}</div>
-            """, unsafe_allow_html=True)
-            
+                <div style='font-size: 1.0rem; color: #666; margin-bottom: 0.8rem;'>{data["sector"]}</div>
+            """,
+                unsafe_allow_html=True,
+            )
+
             # Price and metrics in a modern layout
-            change_color = '#1cd4c8' if data['chg'] >= 0 else '#d41c78'
-            st.markdown(f"""
+            change_color = "#1cd4c8" if data["chg"] >= 0 else "#d41c78"
+            st.markdown(
+                f"""
                 <div style='margin-bottom: 1.5rem;'>
                     <div style='display: flex; align-items: baseline; margin-bottom: 0.8rem;'>
-                        <span style='font-size: 2.5rem; font-weight: 400;'>${data['underlying_price']:.2f}</span>
+                        <span style='font-size: 2.5rem; font-weight: 400;'>${data["underlying_price"]:.2f}</span>
                         <span style='font-size: 1.1rem; color: {change_color}; margin-left: 0.8rem;'>
-                            {'+' if data['chg'] > 0 else ''}{data['chg']:.2f}%
+                            {"+" if data["chg"] > 0 else ""}{data["chg"]:.2f}%
                         </span>
                     </div>
                     <div style='display: flex; flex-wrap: wrap; gap: 0.8rem;'>
@@ -121,30 +130,32 @@ def main():
                             <div style='font-size: 0.8rem; color: #6c757d; margin-bottom: 0.2rem;'>
                                 <i class='fas fa-door-open' style='margin-right: 0.4rem;'></i>Open
                             </div>
-                            <div style='font-size: 1.1rem; font-weight: 500;'>${data['open_price']:.2f}</div>
+                            <div style='font-size: 1.1rem; font-weight: 500;'>${data["open_price"]:.2f}</div>
                         </div>
                         <div style='background: #f8f9fa; border-radius: 8px; padding: 0.6rem 0.8rem; flex: 1; min-width: 120px;'>
                             <div style='font-size: 0.8rem; color: #6c757d; margin-bottom: 0.2rem;'>
                                 <i class='fas fa-arrow-up' style='margin-right: 0.4rem; color: #28a745;'></i>High
                             </div>
-                            <div style='font-size: 1.1rem; font-weight: 500; color: #28a745;'>${data['high']:.2f}</div>
+                            <div style='font-size: 1.1rem; font-weight: 500; color: #28a745;'>${data["high"]:.2f}</div>
                         </div>
                         <div style='background: #f8f9fa; border-radius: 8px; padding: 0.6rem 0.8rem; flex: 1; min-width: 120px;'>
                             <div style='font-size: 0.8rem; color: #6c757d; margin-bottom: 0.2rem;'>
                                 <i class='fas fa-arrow-down' style='margin-right: 0.4rem; color: #dc3545;'></i>Low
                             </div>
-                            <div style='font-size: 1.1rem; font-weight: 500; color: #dc3545;'>${data['low']:.2f}</div>
+                            <div style='font-size: 1.1rem; font-weight: 500; color: #dc3545;'>${data["low"]:.2f}</div>
                         </div>
                         <div style='background: #f8f9fa; border-radius: 8px; padding: 0.6rem 0.8rem; flex: 1; min-width: 120px;'>
                             <div style='font-size: 0.8rem; color: #6c757d; margin-bottom: 0.2rem;'>
                                 <i class='fas fa-chart-line' style='margin-right: 0.4rem;'></i>52w Vol
                             </div>
-                            <div style='font-size: 1.1rem; font-weight: 500;'>{data['vol']:.2f}%</div>
+                            <div style='font-size: 1.1rem; font-weight: 500;'>{data["vol"]:.2f}%</div>
                         </div>
                     </div>
                 </div>
-            """, unsafe_allow_html=True)
-    
+            """,
+                unsafe_allow_html=True,
+            )
+
     # Fetch data if button is clicked
     if fetch_button:
         with st.sidebar:
@@ -153,13 +164,13 @@ def main():
                 if data:
                     st.session_state.data = data
                     st.success(f"Successfully fetched data for {ticker}")
-                    st.rerun()  
+                    st.rerun()
                 else:
                     st.error("Failed to fetch data. Please check the ticker symbol.")
-    
+
     # Add some space before the tabs
     st.markdown("<br>", unsafe_allow_html=True)
-    
+
     # Main content tabs
     tab1, tab3, tab2 = st.tabs(
         ["Option Calculator & Strategy", "Option Chain", "About"]
@@ -245,49 +256,94 @@ def main():
 
                 greeks = st.selectbox(
                     "Greeks",
-                    options=["Delta", "Gamma", "Vega", "Theta", "Rho", "Vanna", "Charm"],
+                    options=[
+                        "Delta",
+                        "Gamma",
+                        "Vega",
+                        "Theta",
+                        "Rho",
+                        "Vanna",
+                        "Charm",
+                    ],
                     key="greeks_select",
                 )
 
                 default_vol = float(data["vol"])
-                
+
                 # 내재변동성 계산 (만기일 및 행사가격 선택 시 델타 중립 변동성 사용)
                 if expiry:
                     try:
                         calls, puts = get_option_chain(ticker, expiry)
-                        
+
                         if calls is not None and puts is not None:
-                            all_strikes = sorted(set(calls["strike"].tolist() + puts["strike"].tolist()))
-                            
+                            all_strikes = sorted(
+                                set(calls["strike"].tolist() + puts["strike"].tolist())
+                            )
+
                             selected_strikes = []
                             if "k1_select_single" in st.session_state:
-                                selected_strikes.append(st.session_state.k1_select_single)
-                            elif "k1_select_strangle_spread" in st.session_state and "k2_select_strangle_spread" in st.session_state:
-                                selected_strikes.append(st.session_state.k1_select_strangle_spread)
-                                selected_strikes.append(st.session_state.k2_select_strangle_spread)
-                            elif "k1_select_butterfly" in st.session_state and "k2_select_butterfly" in st.session_state and "k3_select_butterfly" in st.session_state:
-                                selected_strikes.append(st.session_state.k1_select_butterfly)
-                                selected_strikes.append(st.session_state.k2_select_butterfly)
-                                selected_strikes.append(st.session_state.k3_select_butterfly)
-                            elif "k1_select_condor" in st.session_state and "k2_select_condor" in st.session_state and "k3_select_condor" in st.session_state and "k4_select_condor" in st.session_state:
-                                selected_strikes.append(st.session_state.k1_select_condor)
-                                selected_strikes.append(st.session_state.k2_select_condor)
-                                selected_strikes.append(st.session_state.k3_select_condor)
-                                selected_strikes.append(st.session_state.k4_select_condor)
-                            
+                                selected_strikes.append(
+                                    st.session_state.k1_select_single
+                                )
+                            elif (
+                                "k1_select_strangle_spread" in st.session_state
+                                and "k2_select_strangle_spread" in st.session_state
+                            ):
+                                selected_strikes.append(
+                                    st.session_state.k1_select_strangle_spread
+                                )
+                                selected_strikes.append(
+                                    st.session_state.k2_select_strangle_spread
+                                )
+                            elif (
+                                "k1_select_butterfly" in st.session_state
+                                and "k2_select_butterfly" in st.session_state
+                                and "k3_select_butterfly" in st.session_state
+                            ):
+                                selected_strikes.append(
+                                    st.session_state.k1_select_butterfly
+                                )
+                                selected_strikes.append(
+                                    st.session_state.k2_select_butterfly
+                                )
+                                selected_strikes.append(
+                                    st.session_state.k3_select_butterfly
+                                )
+                            elif (
+                                "k1_select_condor" in st.session_state
+                                and "k2_select_condor" in st.session_state
+                                and "k3_select_condor" in st.session_state
+                                and "k4_select_condor" in st.session_state
+                            ):
+                                selected_strikes.append(
+                                    st.session_state.k1_select_condor
+                                )
+                                selected_strikes.append(
+                                    st.session_state.k2_select_condor
+                                )
+                                selected_strikes.append(
+                                    st.session_state.k3_select_condor
+                                )
+                                selected_strikes.append(
+                                    st.session_state.k4_select_condor
+                                )
+
                             if selected_strikes:
-                                atm_strike = all_strikes[len(all_strikes) // 2]  
-                                
+                                atm_strike = all_strikes[len(all_strikes) // 2]
+
                                 if option_type == "CALL":
                                     atm_option = calls[calls["strike"] == atm_strike]
                                     calc_type = "c"
                                 else:
                                     atm_option = puts[puts["strike"] == atm_strike]
                                     calc_type = "p"
-                                
-                                if not atm_option.empty and "lastPrice" in atm_option.columns:
+
+                                if (
+                                    not atm_option.empty
+                                    and "lastPrice" in atm_option.columns
+                                ):
                                     market_price = atm_option["lastPrice"].iloc[0]
-                                    
+
                                     if market_price > 0:
                                         # Newton-Raphson 방식으로 ATM 옵션의 내재변동성 계산
                                         implied_vol = calculate_implied_volatility(
@@ -297,23 +353,25 @@ def main():
                                             rf=rf,
                                             tau=tau,
                                             y=y,
-                                            option_type=calc_type
+                                            option_type=calc_type,
                                         )
-                                        
+
                                         # 계산된 내재변동성이 유효하면 기본값으로 설정
                                         if 5.0 <= implied_vol <= 100.0:
                                             default_vol = implied_vol
                     except Exception as e:
-                        st.info(f"Using historical volatility. Delta-neutral IV calculation: {e}")
-                
+                        st.info(
+                            f"Using historical volatility. Delta-neutral IV calculation: {e}"
+                        )
+
                 # 변동성 입력 필드 - 계산된 내재변동성 또는 52주 변동성 표시
                 sigma = st.number_input(
                     "IV (%)",
                     value=default_vol,
                     step=0.1,
                     format="%.2f",
-                    label_visibility="visible", 
-                    help="Delta-neutral implied volatility calculated from at-the-money options. This is used for pricing all options in multi-leg strategies."
+                    label_visibility="visible",
+                    help="Delta-neutral implied volatility calculated from at-the-money options. This is used for pricing all options in multi-leg strategies.",
                 )
 
             with param_cols[2]:
@@ -329,13 +387,17 @@ def main():
                             k1 = st.selectbox(
                                 "Strike Price (k1; Lower)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 - 1, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 - 1, len(all_strikes)
+                                ),
                                 key="k1_select_strangle_spread",
                             )
                             k2 = st.selectbox(
                                 "Strike Price (k2; Higher)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 + 1, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 + 1, len(all_strikes)
+                                ),
                                 key="k2_select_strangle_spread",
                             )
                             k3, k4 = None, None
@@ -387,19 +449,25 @@ def main():
                             k1 = st.selectbox(
                                 "Strike (k1; Lower)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 - 2, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 - 2, len(all_strikes)
+                                ),
                                 key="k1_select_butterfly",
                             )
                             k2 = st.selectbox(
                                 "Strike (k2; Middle)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2, len(all_strikes)
+                                ),
                                 key="k2_select_butterfly",
                             )
                             k3 = st.selectbox(
                                 "Strike (k3; Higher)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 + 2, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 + 2, len(all_strikes)
+                                ),
                                 key="k3_select_butterfly",
                             )
                             k4 = None
@@ -460,25 +528,33 @@ def main():
                             k1 = st.selectbox(
                                 "Strike (k1; Lowest)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 - 3, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 - 3, len(all_strikes)
+                                ),
                                 key="k1_select_condor",
                             )
                             k2 = st.selectbox(
                                 "Strike (k2; Lower-Mid)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 - 1, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 - 1, len(all_strikes)
+                                ),
                                 key="k2_select_condor",
                             )
                             k3 = st.selectbox(
                                 "Strike (k3; Upper-Mid)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 + 1, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 + 1, len(all_strikes)
+                                ),
                                 key="k3_select_condor",
                             )
                             k4 = st.selectbox(
                                 "Strike (k4; Highest)",
                                 options=all_strikes,
-                                index=bounded_index(len(all_strikes) // 2 + 3, len(all_strikes)),
+                                index=bounded_index(
+                                    len(all_strikes) // 2 + 3, len(all_strikes)
+                                ),
                                 key="k4_select_condor",
                             )
                         else:
@@ -586,7 +662,9 @@ def main():
                     help="Option prices are theoretical values calculated with the Black-Scholes model using the selected underlying price, strike, expiry, risk-free rate, dividend yield, and IV.",
                 )
 
-                def price_input(sign, instrument, strike_label, value, key, quantity=None):
+                def price_input(
+                    sign, instrument, strike_label, value, key, quantity=None
+                ):
                     render_leg_label(sign, instrument, strike_label, quantity)
                     return st.number_input(
                         "",
@@ -604,11 +682,19 @@ def main():
                     sign = "+" if side == "LONG" else "-"
                     if option_type == "CALL":
                         price1 = price_input(
-                            sign, "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "single_call_price"
+                            sign,
+                            "Call",
+                            "k",
+                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            "single_call_price",
                         )
                     else:
                         price1 = price_input(
-                            sign, "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "single_put_price"
+                            sign,
+                            "Put",
+                            "k",
+                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            "single_put_price",
                         )
 
                 elif strategy == "Spread":
@@ -616,53 +702,103 @@ def main():
                         sign1 = "+" if side == "LONG" else "-"
                         sign2 = "-" if side == "LONG" else "+"
                         price1 = price_input(
-                            sign1, "Call", "k1", bs_model(s, k1, rf, tau, sigma, y, "c"), "spread_call_price1"
+                            sign1,
+                            "Call",
+                            "k1",
+                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            "spread_call_price1",
                         )
                         price2 = price_input(
-                            sign2, "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "spread_call_price2"
+                            sign2,
+                            "Call",
+                            "k2",
+                            bs_model(s, k2, rf, tau, sigma, y, "c"),
+                            "spread_call_price2",
                         )
                     else:
                         sign1 = "-" if side == "LONG" else "+"
                         sign2 = "+" if side == "LONG" else "-"
                         price1 = price_input(
-                            sign1, "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "spread_put_price1"
+                            sign1,
+                            "Put",
+                            "k1",
+                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            "spread_put_price1",
                         )
                         price2 = price_input(
-                            sign2, "Put", "k2", bs_model(s, k2, rf, tau, sigma, y, "p"), "spread_put_price2"
+                            sign2,
+                            "Put",
+                            "k2",
+                            bs_model(s, k2, rf, tau, sigma, y, "p"),
+                            "spread_put_price2",
                         )
 
                 elif strategy == "Straddle":
                     sign = "+" if side == "LONG" else "-"
                     price1 = price_input(
-                        sign, "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "straddle_call_price"
+                        sign,
+                        "Call",
+                        "k",
+                        bs_model(s, k1, rf, tau, sigma, y, "c"),
+                        "straddle_call_price",
                     )
                     price2 = price_input(
-                        sign, "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "straddle_put_price"
+                        sign,
+                        "Put",
+                        "k",
+                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        "straddle_put_price",
                     )
 
                 elif strategy == "Strangle":
                     sign = "+" if side == "LONG" else "-"
                     price1 = price_input(
-                        sign, "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "strangle_put_price"
+                        sign,
+                        "Put",
+                        "k1",
+                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        "strangle_put_price",
                     )
                     price2 = price_input(
-                        sign, "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "strangle_call_price"
+                        sign,
+                        "Call",
+                        "k2",
+                        bs_model(s, k2, rf, tau, sigma, y, "c"),
+                        "strangle_call_price",
                     )
 
                 elif strategy == "Strip":
                     price1 = price_input(
-                        "+", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "strip_put_price", quantity=2
+                        "+",
+                        "Put",
+                        "k",
+                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        "strip_put_price",
+                        quantity=2,
                     )
                     price2 = price_input(
-                        "+", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "strip_call_price"
+                        "+",
+                        "Call",
+                        "k",
+                        bs_model(s, k1, rf, tau, sigma, y, "c"),
+                        "strip_call_price",
                     )
 
                 elif strategy == "Strap":
                     price1 = price_input(
-                        "+", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "strap_put_price"
+                        "+",
+                        "Put",
+                        "k",
+                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        "strap_put_price",
                     )
                     price2 = price_input(
-                        "+", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "strap_call_price", quantity=2
+                        "+",
+                        "Call",
+                        "k",
+                        bs_model(s, k1, rf, tau, sigma, y, "c"),
+                        "strap_call_price",
+                        quantity=2,
                     )
 
                 elif strategy == "Butterfly":
@@ -671,15 +807,30 @@ def main():
                     sign3 = "+" if side == "LONG" else "-"
                     calc_type = "c" if option_type == "CALL" else "p"
                     instrument = "Call" if option_type == "CALL" else "Put"
-                    key_prefix = "butterfly_call" if option_type == "CALL" else "butterfly_put"
+                    key_prefix = (
+                        "butterfly_call" if option_type == "CALL" else "butterfly_put"
+                    )
                     price1 = price_input(
-                        sign1, instrument, "k1", bs_model(s, k1, rf, tau, sigma, y, calc_type), f"{key_prefix}_price1"
+                        sign1,
+                        instrument,
+                        "k1",
+                        bs_model(s, k1, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price1",
                     )
                     price2 = price_input(
-                        sign2, instrument, "k2", bs_model(s, k2, rf, tau, sigma, y, calc_type), f"{key_prefix}_price2", quantity=2
+                        sign2,
+                        instrument,
+                        "k2",
+                        bs_model(s, k2, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price2",
+                        quantity=2,
                     )
                     price3 = price_input(
-                        sign3, instrument, "k3", bs_model(s, k3, rf, tau, sigma, y, calc_type), f"{key_prefix}_price3"
+                        sign3,
+                        instrument,
+                        "k3",
+                        bs_model(s, k3, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price3",
                     )
 
                 elif strategy == "Condor":
@@ -689,18 +840,36 @@ def main():
                     sign4 = "+" if side == "LONG" else "-"
                     calc_type = "c" if option_type == "CALL" else "p"
                     instrument = "Call" if option_type == "CALL" else "Put"
-                    key_prefix = "condor_call" if option_type == "CALL" else "condor_put"
+                    key_prefix = (
+                        "condor_call" if option_type == "CALL" else "condor_put"
+                    )
                     price1 = price_input(
-                        sign1, instrument, "k1", bs_model(s, k1, rf, tau, sigma, y, calc_type), f"{key_prefix}_price1"
+                        sign1,
+                        instrument,
+                        "k1",
+                        bs_model(s, k1, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price1",
                     )
                     price2 = price_input(
-                        sign2, instrument, "k2", bs_model(s, k2, rf, tau, sigma, y, calc_type), f"{key_prefix}_price2"
+                        sign2,
+                        instrument,
+                        "k2",
+                        bs_model(s, k2, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price2",
                     )
                     price3 = price_input(
-                        sign3, instrument, "k3", bs_model(s, k3, rf, tau, sigma, y, calc_type), f"{key_prefix}_price3"
+                        sign3,
+                        instrument,
+                        "k3",
+                        bs_model(s, k3, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price3",
                     )
                     price4 = price_input(
-                        sign4, instrument, "k4", bs_model(s, k4, rf, tau, sigma, y, calc_type), f"{key_prefix}_price4"
+                        sign4,
+                        instrument,
+                        "k4",
+                        bs_model(s, k4, rf, tau, sigma, y, calc_type),
+                        f"{key_prefix}_price4",
                     )
 
                 elif strategy == "Ladder":
@@ -709,48 +878,96 @@ def main():
                         sign2 = "-" if side == "LONG" else "+"
                         sign3 = "-" if side == "LONG" else "+"
                         price1 = price_input(
-                            sign1, "Call", "k1", bs_model(s, k1, rf, tau, sigma, y, "c"), "ladder_call_price1"
+                            sign1,
+                            "Call",
+                            "k1",
+                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            "ladder_call_price1",
                         )
                         price2 = price_input(
-                            sign2, "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "ladder_call_price2"
+                            sign2,
+                            "Call",
+                            "k2",
+                            bs_model(s, k2, rf, tau, sigma, y, "c"),
+                            "ladder_call_price2",
                         )
                         price3 = price_input(
-                            sign3, "Call", "k3", bs_model(s, k3, rf, tau, sigma, y, "c"), "ladder_call_price3"
+                            sign3,
+                            "Call",
+                            "k3",
+                            bs_model(s, k3, rf, tau, sigma, y, "c"),
+                            "ladder_call_price3",
                         )
                     else:
                         sign1 = "-" if side == "LONG" else "+"
                         sign2 = "-" if side == "LONG" else "+"
                         sign3 = "+" if side == "LONG" else "-"
                         price1 = price_input(
-                            sign1, "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "ladder_put_price1"
+                            sign1,
+                            "Put",
+                            "k1",
+                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            "ladder_put_price1",
                         )
                         price2 = price_input(
-                            sign2, "Put", "k2", bs_model(s, k2, rf, tau, sigma, y, "p"), "ladder_put_price2"
+                            sign2,
+                            "Put",
+                            "k2",
+                            bs_model(s, k2, rf, tau, sigma, y, "p"),
+                            "ladder_put_price2",
                         )
                         price3 = price_input(
-                            sign3, "Put", "k3", bs_model(s, k3, rf, tau, sigma, y, "p"), "ladder_put_price3"
+                            sign3,
+                            "Put",
+                            "k3",
+                            bs_model(s, k3, rf, tau, sigma, y, "p"),
+                            "ladder_put_price3",
                         )
 
                 elif strategy == "Jade Lizard":
                     price1 = price_input(
-                        "-", "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "jade_lizard_put_price"
+                        "-",
+                        "Put",
+                        "k1",
+                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        "jade_lizard_put_price",
                     )
                     price2 = price_input(
-                        "-", "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "jade_lizard_call_price1"
+                        "-",
+                        "Call",
+                        "k2",
+                        bs_model(s, k2, rf, tau, sigma, y, "c"),
+                        "jade_lizard_call_price1",
                     )
                     price3 = price_input(
-                        "+", "Call", "k3", bs_model(s, k3, rf, tau, sigma, y, "c"), "jade_lizard_call_price2"
+                        "+",
+                        "Call",
+                        "k3",
+                        bs_model(s, k3, rf, tau, sigma, y, "c"),
+                        "jade_lizard_call_price2",
                     )
 
                 elif strategy == "Reverse Jade Lizard":
                     price1 = price_input(
-                        "+", "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "rev_jade_lizard_put_price1"
+                        "+",
+                        "Put",
+                        "k1",
+                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        "rev_jade_lizard_put_price1",
                     )
                     price2 = price_input(
-                        "-", "Put", "k2", bs_model(s, k2, rf, tau, sigma, y, "p"), "rev_jade_lizard_put_price2"
+                        "-",
+                        "Put",
+                        "k2",
+                        bs_model(s, k2, rf, tau, sigma, y, "p"),
+                        "rev_jade_lizard_put_price2",
                     )
                     price3 = price_input(
-                        "-", "Call", "k3", bs_model(s, k3, rf, tau, sigma, y, "c"), "rev_jade_lizard_call_price"
+                        "-",
+                        "Call",
+                        "k3",
+                        bs_model(s, k3, rf, tau, sigma, y, "c"),
+                        "rev_jade_lizard_call_price",
                     )
 
                 elif strategy == "Covered":
@@ -758,12 +975,20 @@ def main():
                     if option_type == "CALL":
                         render_leg_label("+", "Stock")
                         price1 = price_input(
-                            "-", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "covered_call_price"
+                            "-",
+                            "Call",
+                            "k",
+                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            "covered_call_price",
                         )
                     else:
                         render_leg_label("-", "Stock")
                         price1 = price_input(
-                            "-", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "covered_put_price"
+                            "-",
+                            "Put",
+                            "k",
+                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            "covered_put_price",
                         )
 
                 elif strategy == "Protective":
@@ -771,12 +996,20 @@ def main():
                     if option_type == "CALL":
                         render_leg_label("-", "Stock")
                         price1 = price_input(
-                            "+", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "protective_call_price"
+                            "+",
+                            "Call",
+                            "k",
+                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            "protective_call_price",
                         )
                     else:
                         render_leg_label("+", "Stock")
                         price1 = price_input(
-                            "+", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "protective_put_price"
+                            "+",
+                            "Put",
+                            "k",
+                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            "protective_put_price",
                         )
 
             st.markdown("---")
@@ -805,23 +1038,23 @@ def main():
                             sigma=sigma,
                             y=y,
                         )
-                        
+
                         # Save calculated data to session state
                         st.session_state.df = df
                         st.session_state.strategy_info = strategy_info
-                        
+
                         # Save current parameters to session state (for display)
                         st.session_state.plot_side = side
                         st.session_state.plot_option_type = option_type
                         st.session_state.plot_strategy = strategy
-                        
+
                         # Generate and save the plot
                         st.session_state.plot_fig = plot_option_strategy(
                             df, s, greeks, strategy_info, tau, sigma, y, rf
                         )
                     except Exception as e:
                         st.error(f"Error creating plot: {e}")
-            
+
             # Display the saved plot if it exists
             if st.session_state.plot_fig is not None:
                 col_info1, col_info2, col_info3 = st.columns(3)
@@ -830,15 +1063,42 @@ def main():
 
                 with col_info1:
                     # Get the saved parameters from session state
-                    plot_side = st.session_state.plot_side if "plot_side" in st.session_state else side
-                    plot_option_type = st.session_state.plot_option_type if "plot_option_type" in st.session_state else option_type
-                    plot_strategy = st.session_state.plot_strategy if "plot_strategy" in st.session_state else strategy
-                    
+                    plot_side = (
+                        st.session_state.plot_side
+                        if "plot_side" in st.session_state
+                        else side
+                    )
+                    plot_option_type = (
+                        st.session_state.plot_option_type
+                        if "plot_option_type" in st.session_state
+                        else option_type
+                    )
+                    plot_strategy = (
+                        st.session_state.plot_strategy
+                        if "plot_strategy" in st.session_state
+                        else strategy
+                    )
+
                     # Define strategies that don't need side and/or option_type in their name
-                    side_independent_strategies = ["Strip", "Strap", "Jade Lizard", "Reverse Jade Lizard"]
-                    option_type_independent_strategies = ["Straddle", "Strangle", "Strip", "Strap", "Jade Lizard", "Reverse Jade Lizard"]
-                    covered_protective_strategies = ["Covered", "Protective"]  # These need option_type but not side
-                    
+                    side_independent_strategies = [
+                        "Strip",
+                        "Strap",
+                        "Jade Lizard",
+                        "Reverse Jade Lizard",
+                    ]
+                    option_type_independent_strategies = [
+                        "Straddle",
+                        "Strangle",
+                        "Strip",
+                        "Strap",
+                        "Jade Lizard",
+                        "Reverse Jade Lizard",
+                    ]
+                    covered_protective_strategies = [
+                        "Covered",
+                        "Protective",
+                    ]  # These need option_type but not side
+
                     # Format the strategy title based on strategy type
                     if plot_strategy in side_independent_strategies:
                         # Strategies that don't need side or option_type
@@ -851,8 +1111,10 @@ def main():
                         strategy_title = f"### {plot_side} {plot_strategy}"
                     else:
                         # Strategies that need both side and option_type
-                        strategy_title = f"### {plot_side} {plot_option_type} {plot_strategy}"
-                    
+                        strategy_title = (
+                            f"### {plot_side} {plot_option_type} {plot_strategy}"
+                        )
+
                     st.markdown(strategy_title)
 
                     strategy_color = {
@@ -888,12 +1150,12 @@ def main():
                     dividend_yield=y,
                     risk_free_rate=rf,
                 )
-                
+
                 # Calculate ITM probability
                 if option_type == "CALL":
-                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, 'c', y, rf)
+                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, "c", y, rf)
                 else:
-                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, 'p', y, rf)
+                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, "p", y, rf)
 
                 st.subheader("Strategy Performance")
                 max_profit_text = (
@@ -908,10 +1170,10 @@ def main():
                 )
                 idx = np.abs(df["x"] - s).argmin()
                 current_pl = df["y"].iloc[idx].round(2)
-                
+
                 # Display performance metrics - First row
                 col_p1, col_p2, col_p3, col_p4, col_p5 = st.columns(5)
-                
+
                 with col_p1:
                     st.metric("Underlying price", f"${s:.2f}")
                 with col_p2:
@@ -920,12 +1182,15 @@ def main():
                     st.metric("Max Loss (@100)", min_profit_text)
                 with col_p4:
                     st.metric("Win Rate", f"{win_rate:.2f}%")
-                
+
                 # Second row for Break-Even points
                 col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
-                
+
                 # Display Break-Even points
-                if strategy_info["bep1"] is not None and strategy_info["bep2"] is not None:
+                if (
+                    strategy_info["bep1"] is not None
+                    and strategy_info["bep2"] is not None
+                ):
                     with col_b1:
                         st.metric("Break-Even ₁", f"${strategy_info['bep1']:.2f}")
                     with col_b2:
@@ -941,7 +1206,7 @@ def main():
 
                 st.subheader("Greeks at Current Price")
                 idx = np.abs(df["x"] - s).argmin()
-                
+
                 # Get Greek values
                 delta = df["Delta"].iloc[idx]
                 gamma = df["Gamma"].iloc[idx]
@@ -956,54 +1221,57 @@ def main():
                     {
                         "name": "Δ Delta",
                         "value": delta,
-                        "good_high": True if strategy_info.get('option_type', '').upper() == 'CALL' else False,
+                        "good_high": True
+                        if strategy_info.get("option_type", "").upper() == "CALL"
+                        else False,
                         "description": "Price sensitivity to underlying asset ($1 change)",
-                        "interpretation": "Higher delta means more sensitivity to price changes"
+                        "interpretation": "Higher delta means more sensitivity to price changes",
                     },
                     {
                         "name": "Γ Gamma",
                         "value": gamma,
                         "good_high": True,
                         "description": "Rate of change in Delta per $1 move",
-                        "interpretation": "Higher gamma means delta changes more rapidly"
+                        "interpretation": "Higher gamma means delta changes more rapidly",
                     },
                     {
                         "name": "ν Vega",
                         "value": vega,
                         "good_high": True,
                         "description": "Sensitivity to 1% change in volatility",
-                        "interpretation": "Higher vega means more sensitive to volatility changes"
+                        "interpretation": "Higher vega means more sensitive to volatility changes",
                     },
                     {
                         "name": "Θ Theta",
                         "value": theta,
                         "good_high": False,  # Negative theta is generally bad for option buyers
                         "description": "Daily time decay of option value",
-                        "interpretation": "Negative theta means losing value each day"
+                        "interpretation": "Negative theta means losing value each day",
                     },
                     {
                         "name": "ρ Rho",
                         "value": rho,
                         "good_high": True,
                         "description": "Sensitivity to 1% change in interest rates",
-                        "interpretation": "Higher rates generally increase call values, decrease put values"
+                        "interpretation": "Higher rates generally increase call values, decrease put values",
                     },
                     {
                         "name": "Δν/ΔS Vanna",
                         "value": vanna,
                         "description": "Delta's sensitivity to volatility changes",
-                        "interpretation": "Shows how delta changes with volatility"
+                        "interpretation": "Shows how delta changes with volatility",
                     },
                     {
                         "name": "Δδ/Δt Charm",
                         "value": charm,
                         "description": "Delta's sensitivity to time passing",
-                        "interpretation": "Shows how delta changes as expiration approaches"
-                    }
+                        "interpretation": "Shows how delta changes as expiration approaches",
+                    },
                 ]
 
                 # Display Greeks in a more organized way
-                st.markdown("""
+                st.markdown(
+                    """
                 <style>
                 .greek-card {
                     background: #f8f9fa;
@@ -1035,58 +1303,77 @@ def main():
                     color: #d41c78;
                 }
                 </style>
-                """, unsafe_allow_html=True)
+                """,
+                    unsafe_allow_html=True,
+                )
 
                 # Create two columns for better layout
                 col1, col2 = st.columns(2)
-                
+
                 with col1:
                     for greek in greeks_info[:4]:
-                        value_color = 'positive' if (greek['value'] >= 0 and greek.get('good_high', True)) or \
-                                                    (greek['value'] < 0 and not greek.get('good_high', True)) else 'negative'
-                        
-                        st.markdown(f"""
+                        value_color = (
+                            "positive"
+                            if (greek["value"] >= 0 and greek.get("good_high", True))
+                            or (greek["value"] < 0 and not greek.get("good_high", True))
+                            else "negative"
+                        )
+
+                        st.markdown(
+                            f"""
                         <div class='greek-card'>
                             <div style='display: flex; justify-content: space-between; align-items: center;'>
                                 <div>
-                                    <div class='greek-name'> {greek['name']}</div>
-                                    <div class='greek-value {value_color}'>{greek['value']:+.4f}</div>
+                                    <div class='greek-name'> {greek["name"]}</div>
+                                    <div class='greek-value {value_color}'>{greek["value"]:+.4f}</div>
                                 </div>
                                 <div style='text-align: right;'>
-                                    <div class='greek-desc'>{greek['description']}</div>
-                                    <div style='font-size: 0.8em; color: #888;'>{greek['interpretation']}</div>
+                                    <div class='greek-desc'>{greek["description"]}</div>
+                                    <div style='font-size: 0.8em; color: #888;'>{greek["interpretation"]}</div>
                                 </div>
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
-                
+                        """,
+                            unsafe_allow_html=True,
+                        )
+
                 with col2:
                     for greek in greeks_info[4:]:
-                        value_color = 'positive' if (greek['value'] >= 0 and greek.get('good_high', True)) or \
-                                                    (greek['value'] < 0 and not greek.get('good_high', True)) else 'negative'
-                        
-                        st.markdown(f"""
+                        value_color = (
+                            "positive"
+                            if (greek["value"] >= 0 and greek.get("good_high", True))
+                            or (greek["value"] < 0 and not greek.get("good_high", True))
+                            else "negative"
+                        )
+
+                        st.markdown(
+                            f"""
                         <div class='greek-card'>
                             <div style='display: flex; justify-content: space-between; align-items: center;'>
                                 <div>
-                                    <div class='greek-name'> {greek['name']}</div>
-                                    <div class='greek-value {value_color}'>{greek['value']:+.4f}</div>
+                                    <div class='greek-name'> {greek["name"]}</div>
+                                    <div class='greek-value {value_color}'>{greek["value"]:+.4f}</div>
                                 </div>
                                 <div style='text-align: right;'>
-                                    <div class='greek-desc'>{greek['description']}</div>
-                                    <div style='font-size: 0.8em; color: #888;'>{greek['interpretation']}</div>
+                                    <div class='greek-desc'>{greek["description"]}</div>
+                                    <div style='font-size: 0.8em; color: #888;'>{greek["interpretation"]}</div>
                                 </div>
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
-                        
+                        """,
+                            unsafe_allow_html=True,
+                        )
+
                     # Add a small legend explaining the colors
-                    st.markdown("""
+                    st.markdown(
+                        """
                     <div style='margin-top: 15px; font-size: 0.85em; color: #666;'>
                         <div><span style='color: #1cd4c8;'>Green:</span> Desirable direction for this position</div>
                         <div><span style='color: #d41c78;'>Pink:</span> Less desirable direction</div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """,
+                        unsafe_allow_html=True,
+                    )
 
         else:
             st.info("Please enter a ticker symbol and fetch data in the sidebar first.")
@@ -1310,16 +1597,18 @@ def main():
                             # 충분한 데이터가 있는 경우에만 표면 추가
                             call_surface_added = False
                             put_surface_added = False
-                            
+
                             if len(call_df) > 1:
                                 try:
                                     # 중복 값 및 이상치 제거
-                                    call_df = call_df[(call_df["iv"] > 0) & (call_df["iv"] < 200)]
-                                    
+                                    call_df = call_df[
+                                        (call_df["iv"] > 0) & (call_df["iv"] < 200)
+                                    ]
+
                                     # 최소 필요 데이터 확인
                                     unique_days = call_df["days"].nunique()
                                     unique_strikes = call_df["strike"].nunique()
-                                    
+
                                     if unique_days >= 2 and unique_strikes >= 2:
                                         # 콜 옵션 데이터를 표면에 적합하게 그리드화
                                         call_pivoted = (
@@ -1334,9 +1623,12 @@ def main():
                                         )
 
                                         # 디버그 메시지 제거
-                                        
+
                                         # 데이터가 충분히 있는 경우에만 표면 추가
-                                        if call_pivoted.shape[0] >= 2 and call_pivoted.shape[1] >= 2:
+                                        if (
+                                            call_pivoted.shape[0] >= 2
+                                            and call_pivoted.shape[1] >= 2
+                                        ):
                                             fig.add_trace(
                                                 go.Surface(
                                                     z=call_pivoted.values,
@@ -1352,9 +1644,13 @@ def main():
                                             )
                                             call_surface_added = True
                                         else:
-                                            st.warning("Not enough call option data points after pivoting.")
+                                            st.warning(
+                                                "Not enough call option data points after pivoting."
+                                            )
                                     else:
-                                        st.warning(f"Not enough call option data variety. Need at least 2 different days and strikes. Found: days={unique_days}, strikes={unique_strikes}")
+                                        st.warning(
+                                            f"Not enough call option data variety. Need at least 2 different days and strikes. Found: days={unique_days}, strikes={unique_strikes}"
+                                        )
                                 except Exception as e:
                                     st.warning(f"Error creating call surface: {e}")
                                     st.write("Call data preview:")
@@ -1363,12 +1659,14 @@ def main():
                             if len(put_df) > 1:
                                 try:
                                     # 중복 값 및 이상치 제거
-                                    put_df = put_df[(put_df["iv"] > 0) & (put_df["iv"] < 200)]
-                                    
+                                    put_df = put_df[
+                                        (put_df["iv"] > 0) & (put_df["iv"] < 200)
+                                    ]
+
                                     # 최소 필요 데이터 확인
                                     unique_days = put_df["days"].nunique()
                                     unique_strikes = put_df["strike"].nunique()
-                                    
+
                                     if unique_days >= 2 and unique_strikes >= 2:
                                         # 풋 옵션 데이터를 표면에 적합하게 그리드화
                                         put_pivoted = (
@@ -1381,11 +1679,14 @@ def main():
                                             .fillna(method="ffill")
                                             .fillna(method="bfill")
                                         )
-                                        
+
                                         # 디버그 메시지 제거
 
                                         # 데이터가 충분히 있는 경우에만 표면 추가
-                                        if put_pivoted.shape[0] >= 2 and put_pivoted.shape[1] >= 2:
+                                        if (
+                                            put_pivoted.shape[0] >= 2
+                                            and put_pivoted.shape[1] >= 2
+                                        ):
                                             fig.add_trace(
                                                 go.Surface(
                                                     z=put_pivoted.values,
@@ -1395,16 +1696,22 @@ def main():
                                                     opacity=0.8,
                                                     name="Put Options",
                                                     showscale=True,
-                                                    colorbar=dict(title="IV (%)", x=1.0, y=0.5),
+                                                    colorbar=dict(
+                                                        title="IV (%)", x=1.0, y=0.5
+                                                    ),
                                                 ),
                                                 row=1,
                                                 col=2,
                                             )
                                             put_surface_added = True
                                         else:
-                                            st.warning("Not enough put option data points after pivoting.")
+                                            st.warning(
+                                                "Not enough put option data points after pivoting."
+                                            )
                                     else:
-                                        st.warning(f"Not enough put option data variety. Need at least 2 different days and strikes. Found: days={unique_days}, strikes={unique_strikes}")
+                                        st.warning(
+                                            f"Not enough put option data variety. Need at least 2 different days and strikes. Found: days={unique_days}, strikes={unique_strikes}"
+                                        )
                                 except Exception as e:
                                     st.warning(f"Error creating put surface: {e}")
                                     st.write("Put data preview:")
@@ -1428,12 +1735,16 @@ def main():
 
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
-                                st.warning("Could not create volatility surface due to insufficient data.")
+                                st.warning(
+                                    "Could not create volatility surface due to insufficient data."
+                                )
                     except Exception as e:
                         st.error(f"Error generating volatility surface: {e}")
                         st.write("Original data preview:")
                         if vol_data:
-                            df_sample = pd.DataFrame(vol_data[:10]) # 앞부분 10개만 표시
+                            df_sample = pd.DataFrame(
+                                vol_data[:10]
+                            )  # 앞부분 10개만 표시
                             st.write(df_sample)
                         else:
                             st.write("No data available")
@@ -1551,18 +1862,32 @@ def main():
                     calls, puts = get_option_chain(ticker, expiry)
                     if calls is not None and puts is not None:
                         # Prepare data for volume chart
-                        call_strikes = calls['strike'].tolist()
-                        put_strikes = puts['strike'].tolist()
-                        call_volumes = calls['volume'].tolist()
-                        put_volumes = puts['volume'].tolist()
+                        call_strikes = calls["strike"].tolist()
+                        put_strikes = puts["strike"].tolist()
+                        call_volumes = calls["volume"].tolist()
+                        put_volumes = puts["volume"].tolist()
 
                         # Create volume chart
                         volume_fig = go.Figure()
 
                         # Add call volume bars - 빨간색으로 통일
-                        volume_fig.add_trace(go.Bar(x=call_strikes, y=call_volumes, name='Calls', marker_color='red'))
+                        volume_fig.add_trace(
+                            go.Bar(
+                                x=call_strikes,
+                                y=call_volumes,
+                                name="Calls",
+                                marker_color="red",
+                            )
+                        )
                         # Add put volume bars - 파란색으로 통일
-                        volume_fig.add_trace(go.Bar(x=put_strikes, y=put_volumes, name='Puts', marker_color='blue'))
+                        volume_fig.add_trace(
+                            go.Bar(
+                                x=put_strikes,
+                                y=put_volumes,
+                                name="Puts",
+                                marker_color="blue",
+                            )
+                        )
 
                         volume_fig.update_layout(
                             title="Call and Put Volume by Strike Price",
@@ -1574,55 +1899,97 @@ def main():
 
                         st.plotly_chart(volume_fig, use_container_width=True)
                         # Calculate and display the put-call ratio below the plot
-                        if call_volumes and put_volumes:  # 리스트가 비어있지 않은지 확인
+                        if (
+                            call_volumes and put_volumes
+                        ):  # 리스트가 비어있지 않은지 확인
                             try:
                                 # 유효한 숫자만 합산
-                                call_volume_total = sum(v for v in call_volumes if isinstance(v, (int, float)) and v >= 0)
-                                put_volume_total = sum(v for v in put_volumes if isinstance(v, (int, float)) and v >= 0)
-                                
+                                call_volume_total = sum(
+                                    v
+                                    for v in call_volumes
+                                    if isinstance(v, (int, float)) and v >= 0
+                                )
+                                put_volume_total = sum(
+                                    v
+                                    for v in put_volumes
+                                    if isinstance(v, (int, float)) and v >= 0
+                                )
+
                                 # 3개의 열로 나누어 정보 표시
                                 vol_cols = st.columns(3)
-                                
+
                                 with vol_cols[0]:
-                                    st.metric("Total Call Volume", f"{call_volume_total:,}")
-                                
+                                    st.metric(
+                                        "Total Call Volume", f"{call_volume_total:,}"
+                                    )
+
                                 with vol_cols[1]:
-                                    st.metric("Total Put Volume", f"{put_volume_total:,}")
-                                
+                                    st.metric(
+                                        "Total Put Volume", f"{put_volume_total:,}"
+                                    )
+
                                 with vol_cols[2]:
                                     if call_volume_total > 0:
-                                        put_call_ratio = put_volume_total / call_volume_total
-                                        st.metric("Put-Call Ratio", f"{put_call_ratio:.2f}")
+                                        put_call_ratio = (
+                                            put_volume_total / call_volume_total
+                                        )
+                                        st.metric(
+                                            "Put-Call Ratio", f"{put_call_ratio:.2f}"
+                                        )
                                     else:
                                         st.metric("Put-Call Ratio", "N/A")
-                                    
+
                             except Exception as e:
                                 st.warning(f"Error calculating Put-Call Ratio: {e}")
                         else:
-                            st.warning("Cannot calculate Put-Call Ratio: Volume data is missing")
+                            st.warning(
+                                "Cannot calculate Put-Call Ratio: Volume data is missing"
+                            )
 
                         # 옵션 체인 데이터 표시
                         st.subheader("Call Option Chain")
                         # 내재 변동성 컬럼 확인 및 표시 형식 변경
-                        if 'impliedVolatility' in calls.columns:
-                            calls["impliedVolatility"] = calls["impliedVolatility"].apply(
-                                lambda x: f"{x*100:.2f}%" if isinstance(x, (int, float)) else "N/A"
+                        if "impliedVolatility" in calls.columns:
+                            calls["impliedVolatility"] = calls[
+                                "impliedVolatility"
+                            ].apply(
+                                lambda x: (
+                                    f"{x * 100:.2f}%"
+                                    if isinstance(x, (int, float))
+                                    else "N/A"
+                                )
                             )
-                        elif 'implied_volatility' in calls.columns:
-                            calls["implied_volatility"] = calls["implied_volatility"].apply(
-                                lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else "N/A"
+                        elif "implied_volatility" in calls.columns:
+                            calls["implied_volatility"] = calls[
+                                "implied_volatility"
+                            ].apply(
+                                lambda x: (
+                                    f"{x:.2f}%"
+                                    if isinstance(x, (int, float))
+                                    else "N/A"
+                                )
                             )
                         st.dataframe(calls, use_container_width=True)
 
                         st.subheader("Put Option Chain")
                         # 내재 변동성 컬럼 확인 및 표시 형식 변경
-                        if 'impliedVolatility' in puts.columns:
+                        if "impliedVolatility" in puts.columns:
                             puts["impliedVolatility"] = puts["impliedVolatility"].apply(
-                                lambda x: f"{x*100:.2f}%" if isinstance(x, (int, float)) else "N/A"
+                                lambda x: (
+                                    f"{x * 100:.2f}%"
+                                    if isinstance(x, (int, float))
+                                    else "N/A"
+                                )
                             )
-                        elif 'implied_volatility' in puts.columns:
-                            puts["implied_volatility"] = puts["implied_volatility"].apply(
-                                lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else "N/A"
+                        elif "implied_volatility" in puts.columns:
+                            puts["implied_volatility"] = puts[
+                                "implied_volatility"
+                            ].apply(
+                                lambda x: (
+                                    f"{x:.2f}%"
+                                    if isinstance(x, (int, float))
+                                    else "N/A"
+                                )
                             )
                         st.dataframe(puts, use_container_width=True)
                     else:
@@ -1635,7 +2002,7 @@ def main():
     with tab2:
         # About 탭
         st.header("About Option Pricing Models")
-        
+
         st.markdown(
             r"""
         ### Black-Scholes Model
@@ -1649,7 +2016,9 @@ def main():
         $$d_2 = d_1 - \sigma\sqrt{\tau}$$
         
         **Call price:**
+        
         $$C(S_0, \tau) = S_0 N(d_1)e^{-y\tau} - K e^{-r_f\tau}N(d_2)$$
+        
         
         **Put price:**
         
