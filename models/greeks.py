@@ -39,10 +39,12 @@ def option_greeks(s, k, rf, sigma, tau, y):
 
     nd1 = (1 / (np.sqrt(2 * np.pi))) * np.exp(-(d1**2 / 2))
 
-    call_delta = stats.norm.cdf(d1)
-    put_delta = stats.norm.cdf(d1) - 1
+    dividend_discount = np.exp(-y * tau)
 
-    gamma = nd1 / (s * sigma * np.sqrt(tau))
+    call_delta = dividend_discount * stats.norm.cdf(d1)
+    put_delta = dividend_discount * (stats.norm.cdf(d1) - 1)
+
+    gamma = dividend_discount * nd1 / (s * sigma * np.sqrt(tau))
 
     call_theta = (
         -((s * sigma * np.exp(-y * tau)) / (2 * np.sqrt(tau))) * nd1
@@ -58,7 +60,7 @@ def option_greeks(s, k, rf, sigma, tau, y):
     call_rho = (k * tau * np.exp(-rf * tau) * stats.norm.cdf(d2)) / pct
     put_rho = (k * tau * np.exp(-rf * tau) * (stats.norm.cdf(d2) - 1)) / pct
 
-    vega = (s * np.sqrt(tau) * nd1) / pct
+    vega = (s * dividend_discount * np.sqrt(tau) * nd1) / pct
     
     # Vanna calculation - second-order cross Greek (dDelta/dVol or dVega/dSpot)
     vanna = -(np.exp(-y * tau) * d1 / sigma * nd1) / pct

@@ -105,7 +105,13 @@ def calculate_implied_volatility(
         d1 = (
             np.log(s / k) + (rf_scaled - y_scaled + 0.5 * sigma_scaled**2) * tau_scaled
         ) / (sigma_scaled * np.sqrt(tau_scaled))
-        vega = s * np.sqrt(tau_scaled) * (1 / np.sqrt(2 * np.pi)) * np.exp(-(d1**2) / 2)
+        vega = (
+            s
+            * np.exp(-y_scaled * tau_scaled)
+            * np.sqrt(tau_scaled)
+            * (1 / np.sqrt(2 * np.pi))
+            * np.exp(-(d1**2) / 2)
+        )
 
         # vega가 0에 가까운 경우 처리
         if abs(vega) < 1e-10:

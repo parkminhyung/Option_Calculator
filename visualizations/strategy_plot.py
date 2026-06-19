@@ -3,7 +3,7 @@ import numpy as np
 from strategies.probability import calculate_expiry_range, calculate_probability_curve, calculate_price_probability
 
 
-def plot_option_strategy(df, s, greeks, strategy_info, tau=30, sigma=30, y=0):
+def plot_option_strategy(df, s, greeks, strategy_info, tau=30, sigma=30, y=0, rf=0):
     """
     옵션 전략의 손익 및 그릭스 그래프 생성
     
@@ -181,7 +181,7 @@ def plot_option_strategy(df, s, greeks, strategy_info, tau=30, sigma=30, y=0):
     # 확률 곡선 추가 (파란색 점선 - 더 얇게) - 호버 정보 추가
     try:
         # 가격 범위에 대한 확률 곡선 계산
-        prob_curve = calculate_probability_curve(s, x_vals, tau, sigma, y)
+        prob_curve = calculate_probability_curve(s, x_vals, tau, sigma, y, rf)
         
         # 시각화를 위해 스케일링
         prob_curve = (prob_curve / np.max(prob_curve)) * (y_max - y_min) * 0.4 + y_min
@@ -191,7 +191,9 @@ def plot_option_strategy(df, s, greeks, strategy_info, tau=30, sigma=30, y=0):
         prob_below_values = []
         
         for price in x_vals:
-            prob_above, prob_below = calculate_price_probability(s, price, tau, sigma, y)
+            prob_above, prob_below = calculate_price_probability(
+                s, price, tau, sigma, y, rf
+            )
             prob_above_values.append(prob_above * 100)  # 퍼센트로 변환
             prob_below_values.append(prob_below * 100)  # 퍼센트로 변환
         
@@ -215,7 +217,9 @@ def plot_option_strategy(df, s, greeks, strategy_info, tau=30, sigma=30, y=0):
         )
         
         # 확률 범위 (68% 신뢰구간)
-        lower_bound, upper_bound = calculate_expiry_range(s, tau, sigma, confidence=0.68, dividend_yield=y)
+        lower_bound, upper_bound = calculate_expiry_range(
+            s, tau, sigma, confidence=0.68, dividend_yield=y, risk_free_rate=rf
+        )
         
         # 확률 범위 주석 대신 호버 정보로 제공
         prob_above = 100 * (1 - (s - lower_bound) / (upper_bound - lower_bound))

@@ -16,6 +16,12 @@ from strategies.probability import calculate_price_probability, calculate_itm_pr
 from visualizations.strategy_plot import plot_option_strategy
 
 
+def bounded_index(index, length):
+    if length <= 0:
+        return 0
+    return max(0, min(index, length - 1))
+
+
 def main():
     # 페이지 설정
     apply_page_styles()
@@ -306,15 +312,13 @@ def main():
                             k1 = st.selectbox(
                                 "Strike Price (k1; Lower)",
                                 options=all_strikes,
-                                index=min(len(all_strikes) // 2 - 1, 0),
+                                index=bounded_index(len(all_strikes) // 2 - 1, len(all_strikes)),
                                 key="k1_select_strangle_spread",
                             )
                             k2 = st.selectbox(
                                 "Strike Price (k2; Higher)",
                                 options=all_strikes,
-                                index=min(
-                                    len(all_strikes) // 2 + 1, len(all_strikes) - 1
-                                ),
+                                index=bounded_index(len(all_strikes) // 2 + 1, len(all_strikes)),
                                 key="k2_select_strangle_spread",
                             )
                             k3, k4 = None, None
@@ -366,21 +370,19 @@ def main():
                             k1 = st.selectbox(
                                 "Strike (k1; Lower)",
                                 options=all_strikes,
-                                index=min(len(all_strikes) // 2 - 2, 0),
+                                index=bounded_index(len(all_strikes) // 2 - 2, len(all_strikes)),
                                 key="k1_select_butterfly",
                             )
                             k2 = st.selectbox(
                                 "Strike (k2; Middle)",
                                 options=all_strikes,
-                                index=min(len(all_strikes) // 2, len(all_strikes) - 1),
+                                index=bounded_index(len(all_strikes) // 2, len(all_strikes)),
                                 key="k2_select_butterfly",
                             )
                             k3 = st.selectbox(
                                 "Strike (k3; Higher)",
                                 options=all_strikes,
-                                index=min(
-                                    len(all_strikes) // 2 + 2, len(all_strikes) - 1
-                                ),
+                                index=bounded_index(len(all_strikes) // 2 + 2, len(all_strikes)),
                                 key="k3_select_butterfly",
                             )
                             k4 = None
@@ -441,31 +443,25 @@ def main():
                             k1 = st.selectbox(
                                 "Strike (k1; Lowest)",
                                 options=all_strikes,
-                                index=min(len(all_strikes) // 2 - 3, 0),
+                                index=bounded_index(len(all_strikes) // 2 - 3, len(all_strikes)),
                                 key="k1_select_condor",
                             )
                             k2 = st.selectbox(
                                 "Strike (k2; Lower-Mid)",
                                 options=all_strikes,
-                                index=min(
-                                    len(all_strikes) // 2 - 1, len(all_strikes) - 3
-                                ),
+                                index=bounded_index(len(all_strikes) // 2 - 1, len(all_strikes)),
                                 key="k2_select_condor",
                             )
                             k3 = st.selectbox(
                                 "Strike (k3; Upper-Mid)",
                                 options=all_strikes,
-                                index=min(
-                                    len(all_strikes) // 2 + 1, len(all_strikes) - 2
-                                ),
+                                index=bounded_index(len(all_strikes) // 2 + 1, len(all_strikes)),
                                 key="k3_select_condor",
                             )
                             k4 = st.selectbox(
                                 "Strike (k4; Highest)",
                                 options=all_strikes,
-                                index=min(
-                                    len(all_strikes) // 2 + 3, len(all_strikes) - 1
-                                ),
+                                index=bounded_index(len(all_strikes) // 2 + 3, len(all_strikes)),
                                 key="k4_select_condor",
                             )
                         else:
@@ -1263,7 +1259,9 @@ def main():
                         st.session_state.plot_strategy = strategy
                         
                         # Generate and save the plot
-                        st.session_state.plot_fig = plot_option_strategy(df, s, greeks, strategy_info, tau, sigma, y)
+                        st.session_state.plot_fig = plot_option_strategy(
+                            df, s, greeks, strategy_info, tau, sigma, y, rf
+                        )
                     except Exception as e:
                         st.error(f"Error creating plot: {e}")
             
@@ -1323,13 +1321,22 @@ def main():
                 st.plotly_chart(st.session_state.plot_fig, use_container_width=True)
 
                 # Calculate Win Rate
-                win_rate = calculate_win_rate(df, s, strategy_info["bep1"], strategy_info["bep2"])
+                win_rate = calculate_win_rate(
+                    df,
+                    s,
+                    strategy_info["bep1"],
+                    strategy_info["bep2"],
+                    days=tau,
+                    volatility=sigma,
+                    dividend_yield=y,
+                    risk_free_rate=rf,
+                )
                 
                 # Calculate ITM probability
                 if option_type == "CALL":
-                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, 'c', y)
+                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, 'c', y, rf)
                 else:
-                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, 'p', y)
+                    itm_prob = calculate_itm_probability(s, k1, tau, sigma, 'p', y, rf)
 
                 st.subheader("Strategy Performance")
                 max_profit_text = (
@@ -2073,23 +2080,23 @@ def main():
         st.header("About Option Pricing Models")
         
         st.markdown(
-            """
+            r"""
         ### Black-Scholes Model
         
         The theoretical option price was calculated using the **Black-Scholes model**. The Black-Scholes model is the most widely used option pricing model and was developed by Fisher Black and Myron Scholes to derive European option prices based on Einstein's Brownian motion equations.
         
         The formula used is shown below:
         
-        $$d_1 = \\frac{\ln(S_0/K) + (r_f - y + 0.5 \\sigma^2) \\tau}{\\sigma \\sqrt{\\tau}}$$
+        $$d_1 = \frac{\ln(S_0/K) + (r_f - y + 0.5 \sigma^2)\tau}{\sigma\sqrt{\tau}}$$
         
-        $$d_2 = d_1 - \\sigma \\sqrt{\\tau}$$
+        $$d_2 = d_1 - \sigma\sqrt{\tau}$$
         
         **Call price:**
-        $$C(S_0, \\tau) = S_0 N(d_1) e^{-y \\tau} - K e^{-r_f \\tau} N(d_2)$$
+        $$C(S_0, \tau) = S_0 N(d_1)e^{-y\tau} - K e^{-r_f\tau}N(d_2)$$
         
         **Put price:**
         
-        $$P(S_0, \\tau) = K e^{-r_f \\tau} N(-d_2) - S_0 N(-d_1) e^{-y \\tau}$$
+        $$P(S_0, \tau) = K e^{-r_f\tau}N(-d_2) - S_0 N(-d_1)e^{-y\tau}$$
         
         *where,*
         - $S_0$ : Underlying Price
@@ -2102,7 +2109,7 @@ def main():
         )
 
         st.markdown(
-            """
+            r"""
         ### Option Greeks
         
         Option Greeks are key measures that assess an option's price sensitivity to factors like volatility and the price of the underlying asset. They are crucial for analyzing options portfolios and are widely used by investors to make informed trading decisions.
@@ -2115,43 +2122,43 @@ def main():
         
         Put options have a Delta between 0.00 and –1.00, with at-the-money options near –0.50, decreasing toward –1.00 as they move deeper ITM or approach expiration, and approaching 0.00 if they are out-of-the-money.
         
-        $$\\text{Call: } \\Delta_c = e^{-y\\tau}N(d_1)$$
+        $$\text{Call: } \Delta_c = e^{-y\tau}N(d_1)$$
         
-        $$\\text{Put: } \\Delta_p = e^{-y\\tau}[N(d_1)-1]$$
+        $$\text{Put: } \Delta_p = e^{-y\tau}[N(d_1)-1]$$
         
         **Gamma:**
         
         Gamma measures the rate of change in an option's Delta for every $1 move in the underlying asset, much like acceleration compared to speed. As Delta increases with a stock price move, Gamma reflects how much Delta shifts.
         
-        $$\\Gamma = \\frac{e^{-y\\tau}}{S_0\\sigma\\sqrt{\\tau}}N'(d_1)$$
+        $$\Gamma = \frac{e^{-y\tau}}{S_0\sigma\sqrt{\tau}}N'(d_1)$$
         
         **Vega:**
         
         Vega measures the change in an option's price for a one-percentage-point change in the implied volatility of the underlying asset.
         
-        $$\\nu = S_0e^{-y\\tau}N'(d_1)\\sqrt{\\tau}$$
+        $$\nu = S_0e^{-y\tau}N'(d_1)\sqrt{\tau}$$
         
         **Theta:**
         
         Theta measures the daily decrease in an option's price as it approaches expiration, reflecting time decay.
         
-        $$\\text{Call: } \\theta_c = 1/T(-(\\frac{S_0\\sigma e^{-y\\tau}}{2\\sqrt{\\tau}}N'(d_1)) - r_fKe^{-r_f\\tau} N(d_2) + yS_0e^{-y\\tau}N(d_1))$$
+        $$\text{Call: } \theta_c = \frac{1}{T}\left(-\frac{S_0\sigma e^{-y\tau}}{2\sqrt{\tau}}N'(d_1) - r_fKe^{-r_f\tau}N(d_2) + yS_0e^{-y\tau}N(d_1)\right)$$
         
-        $$\\text{Put: } \\theta_p = 1/T(-(\\frac{S_0\\sigma e^{-y\\tau}}{2\\sqrt{\\tau}}N'(d_1)) + r_fKe^{-r_f\\tau} N(-d_2) - yS_0e^{-y\\tau}N(-d_1))$$
+        $$\text{Put: } \theta_p = \frac{1}{T}\left(-\frac{S_0\sigma e^{-y\tau}}{2\sqrt{\tau}}N'(d_1) + r_fKe^{-r_f\tau}N(-d_2) - yS_0e^{-y\tau}N(-d_1)\right)$$
         
         **Rho:**
         
         Rho measures the change in an option's price for a one-percentage-point shift in interest rates.
         
-        $$\\text{Call: } \\rho_c = K\\tau e^{-r_f\\tau}N(d_2)$$
+        $$\text{Call: } \rho_c = K\tau e^{-r_f\tau}N(d_2)$$
         
-        $$\\text{Put: } \\rho_p = -K\\tau e^{-r_f\\tau}N(-d_2)$$
+        $$\text{Put: } \rho_p = -K\tau e^{-r_f\tau}N(-d_2)$$
         
         **Vanna:**
         
         Vanna (also known as DvegaDspot or DdeltaDvol) measures the rate of change of delta with respect to a change in volatility, or equivalently, the rate of change of vega with respect to a change in the underlying price. Vanna is a second-order Greek that helps traders understand how their delta hedges will change when volatility changes.
         
-        $$\\text{Vanna} = -e^{-y\\tau}\\frac{d_1}{\\sigma}N'(d_1)$$
+        $$\text{Vanna} = -e^{-y\tau}\frac{d_1}{\sigma}N'(d_1)$$
         
         Vanna is highest for at-the-money options with moderate time to expiration. Positive vanna means that as volatility increases, delta increases (becomes more positive). Vanna is the same for both calls and puts with the same strike and expiration.
         
@@ -2159,9 +2166,9 @@ def main():
         
         Charm (also known as delta decay) measures the instantaneous rate of change of delta over the passage of time. It tells option traders how much delta will change each day if all other factors remain constant. Charm helps traders maintain delta-neutral positions as time passes.
         
-        $$\\text{Call Charm} = -e^{-y\\tau}\\frac{N'(d_1)(2(r_f-y)\\tau-d_2\\sigma\\sqrt{\\tau})}{2\\tau\\sigma\\sqrt{\\tau}}$$
+        $$\text{Call Charm} = -e^{-y\tau}\frac{N'(d_1)(2(r_f-y)\tau-d_2\sigma\sqrt{\tau})}{2\tau\sigma\sqrt{\tau}}$$
         
-        $$\\text{Put Charm} = -e^{-y\\tau}\\frac{N'(d_1)(2(r_f-y)\\tau-d_2\\sigma\\sqrt{\\tau})}{2\\tau\\sigma\\sqrt{\\tau}} - ye^{-y\\tau}N(-d_1)$$
+        $$\text{Put Charm} = -e^{-y\tau}\frac{N'(d_1)(2(r_f-y)\tau-d_2\sigma\sqrt{\tau})}{2\tau\sigma\sqrt{\tau}} - ye^{-y\tau}N(-d_1)$$
         
         Charm can be particularly significant for options close to expiration, helping traders understand how quickly delta changes as time runs out.
         """

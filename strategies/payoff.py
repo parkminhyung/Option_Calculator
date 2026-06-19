@@ -68,6 +68,9 @@ def calculate_payoff_df(
     tuple
         (페이오프 데이터프레임, 전략 정보 딕셔너리)
     """
+    if strategy in ["Straddle", "Strip", "Strap"] and k2 is None:
+        k2 = k1
+
     k_values = [k for k in [k1, k2, k3, k4] if k is not None]
     if not k_values:
         return None
@@ -212,25 +215,25 @@ def calculate_payoff_df(
 
     elif strategy == "Straddle":
         if side == "LONG":
-            y_values = p1 + c1
-            delta = put_delta1 + call_delta1
-            gamma = gamma1 + gamma1
-            vega = vega1 + vega1
-            theta = put_theta1 + call_theta1
-            rho = put_rho1 + call_rho1
-            vanna = vanna1 + vanna1
-            charm = put_charm1 + call_charm1
+            y_values = c1 + p2
+            delta = call_delta1 + put_delta2
+            gamma = gamma1 + gamma2
+            vega = vega1 + vega2
+            theta = call_theta1 + put_theta2
+            rho = call_rho1 + put_rho2
+            vanna = vanna1 + vanna2
+            charm = call_charm1 + put_charm2
             strategy_type = "Neutral"
             risk_level = "High Risk"
         elif side == "SHORT":
-            y_values = -(p1 + c1)
-            delta = -(put_delta1 + call_delta1)
-            gamma = -(gamma1 + gamma1)
-            vega = -(vega1 + vega1)
-            theta = -(put_theta1 + call_theta1)
-            rho = -(put_rho1 + call_rho1)
-            vanna = -(vanna1 + vanna1)
-            charm = -(put_charm1 + call_charm1)
+            y_values = -(c1 + p2)
+            delta = -(call_delta1 + put_delta2)
+            gamma = -(gamma1 + gamma2)
+            vega = -(vega1 + vega2)
+            theta = -(call_theta1 + put_theta2)
+            rho = -(call_rho1 + put_rho2)
+            vanna = -(vanna1 + vanna2)
+            charm = -(call_charm1 + put_charm2)
             strategy_type = "Neutral"
             risk_level = "High Risk"
 
@@ -353,26 +356,26 @@ def calculate_payoff_df(
         risk_level = "Low Risk"
 
     elif strategy == "Strip":
-        y_values = c1 + 2 * p1
-        delta = call_delta1 + 2 * put_delta1
-        gamma = 3 * gamma1
-        vega = 3 * vega1
-        theta = call_theta1 + 2 * put_theta1
-        rho = call_rho1 + 2 * put_rho1
-        vanna = 3 * vanna1
-        charm = call_charm1 + 2 * put_charm1
+        y_values = c2 + 2 * p1
+        delta = call_delta2 + 2 * put_delta1
+        gamma = gamma2 + 2 * gamma1
+        vega = vega2 + 2 * vega1
+        theta = call_theta2 + 2 * put_theta1
+        rho = call_rho2 + 2 * put_rho1
+        vanna = vanna2 + 2 * vanna1
+        charm = call_charm2 + 2 * put_charm1
         strategy_type = "Bearish"
         risk_level = "High Risk"
 
     elif strategy == "Strap":
-        y_values = 2 * c1 + p1
-        delta = 2 * call_delta1 + put_delta1
-        gamma = 3 * gamma1
-        vega = 3 * vega1
-        theta = 2 * call_theta1 + put_theta1
-        rho = 2 * call_rho1 + put_rho1
-        vanna = 3 * vanna1
-        charm = 2 * call_charm1 + put_charm1
+        y_values = 2 * c2 + p1
+        delta = 2 * call_delta2 + put_delta1
+        gamma = 2 * gamma2 + gamma1
+        vega = 2 * vega2 + vega1
+        theta = 2 * call_theta2 + put_theta1
+        rho = 2 * call_rho2 + put_rho1
+        vanna = 2 * vanna2 + vanna1
+        charm = 2 * call_charm2 + put_charm1
         strategy_type = "Bullish"
         risk_level = "High Risk"
 
@@ -581,35 +584,41 @@ def calculate_payoff_df(
     bep1 = x[sign_changes[0]] if len(sign_changes) > 0 else None
     bep2 = x[sign_changes[1]] if len(sign_changes) > 1 else None
 
+    premium1 = price1 or 0
+    premium2 = price2 or 0
+    premium3 = price3 or 0
+    def scaled(value):
+        return value * size
+
     # 각 전략별 최대/최소 손익 계산 (무한대 손익 적절하게 처리)
     if strategy == "Single":
         if side == "LONG" and option_type == "CALL":
             max_profit = float("inf")  # 콜 매수: 무제한 이익
-            min_profit = calculated_min_profit  # 최대 손실은 프리미엄
+            min_profit = scaled(-premium1)  # 최대 손실은 프리미엄
         elif side == "SHORT" and option_type == "CALL":
-            max_profit = calculated_max_profit  # 최대 이익은 프리미엄
+            max_profit = scaled(premium1)  # 최대 이익은 프리미엄
             min_profit = float("-inf")  # 콜 매도: 무제한 손실
         elif side == "LONG" and option_type == "PUT":
-            max_profit = float("inf")  # 스트래들 매수: 무제한 이익 가능
-            min_profit = calculated_min_profit  # 최대 손실은 프리미엄
+            max_profit = scaled(k1 - premium1)  # 풋 매수 최대 이익은 기초자산 0 도달 시
+            min_profit = scaled(-premium1)  # 최대 손실은 프리미엄
         elif side == "SHORT" and option_type == "PUT":
-            max_profit = calculated_max_profit  # 최대 이익은 프리미엄
-            min_profit = float("-inf")  # 스트래들 매도: 무제한 손실 가능
+            max_profit = scaled(premium1)  # 최대 이익은 프리미엄
+            min_profit = scaled(premium1 - k1)  # 풋 매도 최대 손실은 기초자산 0 도달 시
 
     elif strategy == "Straddle":
         if side == "LONG":
             max_profit = float("inf")  # 스트래들 매수: 무제한 이익 가능
-            min_profit = calculated_min_profit  # 최대 손실은 양쪽 프리미엄 합계
+            min_profit = scaled(-(premium1 + premium2))  # 최대 손실은 양쪽 프리미엄 합계
         elif side == "SHORT":
-            max_profit = calculated_max_profit  # 최대 이익은 양쪽 프리미엄 합계
+            max_profit = scaled(premium1 + premium2)  # 최대 이익은 양쪽 프리미엄 합계
             min_profit = float("-inf")  # 스트래들 매도: 무제한 손실 가능
 
     elif strategy == "Strangle":
         if side == "LONG":
             max_profit = float("inf")  # 스트랭글 매수: 무제한 이익 가능
-            min_profit = calculated_min_profit  # 최대 손실은 양쪽 프리미엄 합계
+            min_profit = scaled(-(premium1 + premium2))  # 최대 손실은 양쪽 프리미엄 합계
         elif side == "SHORT":
-            max_profit = calculated_max_profit  # 최대 이익은 양쪽 프리미엄 합계
+            max_profit = scaled(premium1 + premium2)  # 최대 이익은 양쪽 프리미엄 합계
             min_profit = float("-inf")  # 스트랭글 매도: 무제한 손실 가능
 
     elif strategy == "Spread":
@@ -639,28 +648,28 @@ def calculate_payoff_df(
         min_profit = calculated_min_profit
 
     elif strategy == "Covered" and option_type == "CALL":
-        max_profit = calculated_max_profit  # 최대 이익은 행사가격에서 매수가 차감 + 프리미엄
-        min_profit = float("-inf")  # 기초자산 하락에 따른 손실은 이론상 무제한
+        max_profit = scaled(k1 - s + premium1)  # 최대 이익은 행사가격에서 매수가 차감 + 프리미엄
+        min_profit = scaled(-s + premium1)  # 기초자산은 0 아래로 내려가지 않음
 
     elif strategy == "Covered" and option_type == "PUT":
-        max_profit = calculated_max_profit  # 최대 이익은 프리미엄
-        min_profit = float("-inf")  # 기초자산 하락에 따른 손실은 이론상 무제한
+        max_profit = scaled(s - k1 + premium1)  # 숏 주식 + 숏 풋은 하방에서 수익이 제한됨
+        min_profit = float("-inf")  # 기초자산 상승에 따른 숏 주식 손실은 무제한
 
     elif strategy == "Protective" and option_type == "PUT":
         max_profit = float("inf")  # 기초자산 상승에 따른 이익은 이론상 무제한
-        min_profit = calculated_min_profit  # 최대 손실은 프리미엄 + 행사가격과 현재가격 차이
+        min_profit = scaled(k1 - s - premium1)  # 최대 손실은 프리미엄 + 행사가격과 현재가격 차이
 
     elif strategy == "Protective" and option_type == "CALL":
-        max_profit = float("inf")  # 기초자산 상승에 따른 이익은 이론상 무제한
-        min_profit = calculated_min_profit  # 최대 손실은 프리미엄 + 행사가격과 현재가격 차이
+        max_profit = scaled(s - premium1)  # 기초자산이 0에 도달할 때 최대
+        min_profit = scaled(s - k1 - premium1)  # 상승 구간에서는 손익이 이 값으로 제한됨
 
     elif strategy == "Strip":
-        max_profit = float("inf")  # 최대 이익은 하방 움직임에서 제한적임 (풋 2개 행사)
-        min_profit = calculated_min_profit  # 상방 움직임에서 손실은 이론상 무제한
+        max_profit = float("inf")  # 콜 보유로 상방 이익은 무제한
+        min_profit = scaled(-(premium2 + 2 * premium1))  # 최대 손실은 전체 프리미엄
 
     elif strategy == "Strap":
         max_profit = float("inf")  # 상방 움직임에서 이익은 이론상 무제한 (콜 2개)
-        min_profit = calculated_min_profit  # 최대 손실은 프리미엄 합계
+        min_profit = scaled(-(2 * premium2 + premium1))  # 최대 손실은 프리미엄 합계
 
     elif strategy == "Ladder":
         if option_type == "CALL":
@@ -673,14 +682,17 @@ def calculate_payoff_df(
         else:  # option_type == "PUT"
             if side == "LONG":
                 max_profit = calculated_max_profit  # 최대 이익은 제한적
-                min_profit = float("-inf")  # 상방 극단 움직임에서 손실은 무제한
+                min_profit = calculated_min_profit  # 풋 래더는 양쪽 손익이 제한됨
             else:  # SHORT
-                max_profit = float("inf")  # 상방 극단 움직임에서 이익은 무제한
+                max_profit = calculated_max_profit  # 풋 래더는 양쪽 손익이 제한됨
                 min_profit = calculated_min_profit  # 최대 손실은 제한적
 
     elif strategy == "Jade Lizard":
-        max_profit = calculated_max_profit  # 최대 이익은 받은 프리미엄 합계
-        min_profit = float("-inf")  # 최대 손실은 상방 극단 움직임에서 무제한
+        net_credit = premium1 + premium2 - premium3
+        upside_result = net_credit - max(k3 - k2, 0)
+        downside_result = net_credit - k1
+        max_profit = scaled(net_credit)  # 최대 이익은 받은 순 프리미엄
+        min_profit = scaled(min(upside_result, downside_result))  # 양쪽 손실 모두 제한됨
 
     elif strategy == "Reverse Jade Lizard":
         max_profit = calculated_max_profit  # 최대 이익은 제한적
@@ -695,6 +707,8 @@ def calculate_payoff_df(
     strategy_info = {
         "strategy_type": strategy_type,
         "risk_level": risk_level,
+        "side": side,
+        "option_type": option_type,
         "bep1": bep1,
         "bep2": bep2,
         "max_profit": max_profit,

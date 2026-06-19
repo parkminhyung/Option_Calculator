@@ -2,7 +2,14 @@ import numpy as np
 import scipy.stats as stats
 
 
-def calculate_price_probability(current_price, target_price, days, volatility, dividend_yield=0):
+def calculate_price_probability(
+    current_price,
+    target_price,
+    days,
+    volatility,
+    dividend_yield=0,
+    risk_free_rate=0,
+):
     """
     기초자산 가격이 만기일에 특정 가격보다 높을/낮을 확률 계산
     
@@ -30,10 +37,11 @@ def calculate_price_probability(current_price, target_price, days, volatility, d
     # 파라미터 변환
     vol = volatility / 100.0
     div = dividend_yield / 100.0
+    rf = risk_free_rate / 100.0
     t = days / 252.0  # 거래일 기준으로 변환
     
     # 로그 정규 분포 파라미터 계산
-    mu = np.log(current_price) + (div - (vol**2) / 2) * t
+    mu = np.log(current_price) + (rf - div - (vol**2) / 2) * t
     sigma = vol * np.sqrt(t)
     
     # 확률 계산
@@ -44,7 +52,14 @@ def calculate_price_probability(current_price, target_price, days, volatility, d
     return prob_above, prob_below
 
 
-def calculate_expiry_range(current_price, days, volatility, confidence=0.68, dividend_yield=0):
+def calculate_expiry_range(
+    current_price,
+    days,
+    volatility,
+    confidence=0.68,
+    dividend_yield=0,
+    risk_free_rate=0,
+):
     """
     특정 신뢰도에 따른 만기일의 가격 범위 계산
     
@@ -72,10 +87,11 @@ def calculate_expiry_range(current_price, days, volatility, confidence=0.68, div
     # 파라미터 변환
     vol = volatility / 100.0
     div = dividend_yield / 100.0
+    rf = risk_free_rate / 100.0
     t = days / 252.0  # 거래일 기준으로 변환
     
     # 로그 정규 분포 파라미터 계산
-    mu = np.log(current_price) + (div - (vol**2) / 2) * t
+    mu = np.log(current_price) + (rf - div - (vol**2) / 2) * t
     sigma = vol * np.sqrt(t)
     
     # 신뢰구간 계산
@@ -87,7 +103,15 @@ def calculate_expiry_range(current_price, days, volatility, confidence=0.68, div
     return lower_bound, upper_bound
 
 
-def calculate_itm_probability(s, k, days, volatility, option_type, dividend_yield=0):
+def calculate_itm_probability(
+    s,
+    k,
+    days,
+    volatility,
+    option_type,
+    dividend_yield=0,
+    risk_free_rate=0,
+):
     """
     만기일에 옵션이 내가격(ITM)이 될 확률 계산
     
@@ -111,7 +135,9 @@ def calculate_itm_probability(s, k, days, volatility, option_type, dividend_yiel
     float
         ITM 확률
     """
-    prob_above, prob_below = calculate_price_probability(s, k, days, volatility, dividend_yield)
+    prob_above, prob_below = calculate_price_probability(
+        s, k, days, volatility, dividend_yield, risk_free_rate
+    )
     
     if option_type.lower() == 'c':
         return prob_above  # 콜옵션이 ITM일 확률 = 기초자산이 행사가격보다 높을 확률
@@ -119,7 +145,17 @@ def calculate_itm_probability(s, k, days, volatility, option_type, dividend_yiel
         return prob_below  # 풋옵션이 ITM일 확률 = 기초자산이 행사가격보다 낮을 확률
 
 
-def calculate_win_rate(df, s, bep1, bep2=None, price_points=100):
+def calculate_win_rate(
+    df,
+    s,
+    bep1,
+    bep2=None,
+    price_points=100,
+    days=30,
+    volatility=30,
+    dividend_yield=0,
+    risk_free_rate=0,
+):
     """
     전략의 승률(Win Rate) 계산 - 이익 구간의 확률 합계 / 전체 확률 합계
     
@@ -143,10 +179,6 @@ def calculate_win_rate(df, s, bep1, bep2=None, price_points=100):
     """
     if df is None or df.empty:
         return 0.0
-    
-    # 기본 변동성 및 일수 설정
-    vol = 30  # 기본 변동성
-    days = 30  # 기본 만기일
     
     # 이익/손실 구간 결정
     x_vals = df['x'].values
@@ -188,8 +220,12 @@ def calculate_win_rate(df, s, bep1, bep2=None, price_points=100):
         end_price = x_vals[end_idx]
         
         # 시작 가격과 종료 가격 확률 계산
-        prob_above_start, _ = calculate_price_probability(s, start_price, days, vol)
-        prob_above_end, _ = calculate_price_probability(s, end_price, days, vol)
+        prob_above_start, _ = calculate_price_probability(
+            s, start_price, days, volatility, dividend_yield, risk_free_rate
+        )
+        prob_above_end, _ = calculate_price_probability(
+            s, end_price, days, volatility, dividend_yield, risk_free_rate
+        )
         
         # 구간 확률 계산
         segment_prob = abs(prob_above_start - prob_above_end)
@@ -209,7 +245,9 @@ def calculate_win_rate(df, s, bep1, bep2=None, price_points=100):
     return win_rate
 
 
-def calculate_probability_curve(s, price_range, days, volatility, dividend_yield=0):
+def calculate_probability_curve(
+    s, price_range, days, volatility, dividend_yield=0, risk_free_rate=0
+):
     """
     가격 범위에 대한 확률 곡선 생성
     
@@ -237,10 +275,11 @@ def calculate_probability_curve(s, price_range, days, volatility, dividend_yield
     # 파라미터 변환
     vol = volatility / 100.0
     div = dividend_yield / 100.0
+    rf = risk_free_rate / 100.0
     t = days / 252.0  # 거래일 기준으로 변환
     
     # 로그 정규 분포 파라미터 계산
-    mu = np.log(s) + (div - (vol**2) / 2) * t
+    mu = np.log(s) + (rf - div - (vol**2) / 2) * t
     sigma = vol * np.sqrt(t)
     
     # 로그 정규 확률 밀도 함수
