@@ -22,6 +22,23 @@ def bounded_index(index, length):
     return max(0, min(index, length - 1))
 
 
+def render_leg_label(sign, instrument, strike_label=None, quantity=None):
+    css_class = "positive" if sign == "+" else "negative"
+    qty_text = f"{quantity}x " if quantity else ""
+    strike_text = f"<span class='leg-strike'>{strike_label}</span>" if strike_label else ""
+
+    st.markdown(
+        f"""
+        <div class='option-label'>
+            <span class='leg-badge {css_class}'>{sign}</span>
+            <span class='leg-name'>{qty_text}{instrument}</span>
+            {strike_text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     # 페이지 설정
     apply_page_styles()
@@ -291,7 +308,7 @@ def main():
                 
                 # 변동성 입력 필드 - 계산된 내재변동성 또는 52주 변동성 표시
                 sigma = st.number_input(
-                    "Volatility (Delta-neutral IV, %)",
+                    "IV (%)",
                     value=default_vol,
                     step=0.1,
                     format="%.2f",
@@ -563,664 +580,204 @@ def main():
 
             # Option Prices 섹션을 4번째 컬럼으로 이동
             with param_cols[3]:
-                # 내재변동성 표시 없이 Option Prices로만 표기
                 st.markdown(
                     "<div class='param-label'>Option Prices</div>",
                     unsafe_allow_html=True,
+                    help="Option prices are theoretical values calculated with the Black-Scholes model using the selected underlying price, strike, expiry, risk-free rate, dividend yield, and IV.",
                 )
+
+                def price_input(sign, instrument, strike_label, value, key, quantity=None):
+                    render_leg_label(sign, instrument, strike_label, quantity)
+                    return st.number_input(
+                        "",
+                        value=value,
+                        step=0.01,
+                        format="%.2f",
+                        key=key,
+                        label_visibility="collapsed",
+                    )
+
+                price1, price2, price3, price4 = None, None, None, None
 
                 # 전략별 옵션 가격 입력 필드 생성
                 if strategy == "Single":
+                    sign = "+" if side == "LONG" else "-"
                     if option_type == "CALL":
-                        sign = "+" if side == "LONG" else "-"
-                        css_class = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class}'>{sign}</span> Call (k)</div>",
-                            unsafe_allow_html=True,
+                        price1 = price_input(
+                            sign, "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "single_call_price"
                         )
-                        # 변동성 필드에 이미 내재변동성이 반영되어 있으므로 그대로 사용
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="single_call_price",
-                            label_visibility="collapsed",
-                        )
-                        price2, price3, price4 = None, None, None
                     else:
-                        sign = "+" if side == "LONG" else "-"
-                        css_class = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class}'>{sign}</span> Put (k)</div>",
-                            unsafe_allow_html=True,
+                        price1 = price_input(
+                            sign, "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "single_put_price"
                         )
-                        # 변동성 필드에 이미 내재변동성이 반영되어 있으므로 그대로 사용
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="single_put_price",
-                            label_visibility="collapsed",
-                        )
-                        price2, price3, price4 = None, None, None
+
                 elif strategy == "Spread":
                     if option_type == "CALL":
                         sign1 = "+" if side == "LONG" else "-"
                         sign2 = "-" if side == "LONG" else "+"
-                        css_class1 = "positive" if side == "LONG" else "negative"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Call (k1)</div>",
-                            unsafe_allow_html=True,
+                        price1 = price_input(
+                            sign1, "Call", "k1", bs_model(s, k1, rf, tau, sigma, y, "c"), "spread_call_price1"
                         )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="spread_call_price1",
-                            label_visibility="collapsed",
+                        price2 = price_input(
+                            sign2, "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "spread_call_price2"
                         )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> Call (k2)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="spread_call_price2",
-                            label_visibility="collapsed",
-                        )
-                        price3, price4 = None, None
                     else:
                         sign1 = "-" if side == "LONG" else "+"
                         sign2 = "+" if side == "LONG" else "-"
-                        css_class1 = "negative" if side == "LONG" else "positive"
-                        css_class2 = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Put (k1)</div>",
-                            unsafe_allow_html=True,
+                        price1 = price_input(
+                            sign1, "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "spread_put_price1"
                         )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="spread_put_price1",
-                            label_visibility="collapsed",
+                        price2 = price_input(
+                            sign2, "Put", "k2", bs_model(s, k2, rf, tau, sigma, y, "p"), "spread_put_price2"
                         )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> Put (k2)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="spread_put_price2",
-                            label_visibility="collapsed",
-                        )
-                        price3, price4 = None, None
+
                 elif strategy == "Straddle":
                     sign = "+" if side == "LONG" else "-"
-                    css_class = "positive" if side == "LONG" else "negative"
-                    st.markdown(
-                        f"<div class='option-label'><span class='{css_class}'>{sign}</span> Call (k)</div>",
-                        unsafe_allow_html=True,
+                    price1 = price_input(
+                        sign, "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "straddle_call_price"
                     )
-                    price1 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="straddle_call_price",
-                        label_visibility="collapsed",
+                    price2 = price_input(
+                        sign, "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "straddle_put_price"
                     )
-                    st.markdown(
-                        f"<div class='option-label'><span class='{css_class}'>{sign}</span> Put (k)</div>",
-                        unsafe_allow_html=True,
-                    )
-                    price2 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="straddle_put_price",
-                        label_visibility="collapsed",
-                    )
-                    price3, price4 = None, None
+
                 elif strategy == "Strangle":
                     sign = "+" if side == "LONG" else "-"
-                    css_class = "positive" if side == "LONG" else "negative"
-                    st.markdown(
-                        f"<div class='option-label'><span class='{css_class}'>{sign}</span> Put (k1)</div>",
-                        unsafe_allow_html=True,
+                    price1 = price_input(
+                        sign, "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "strangle_put_price"
                     )
-                    price1 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="strangle_put_price",
-                        label_visibility="collapsed",
+                    price2 = price_input(
+                        sign, "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "strangle_call_price"
                     )
-                    st.markdown(
-                        f"<div class='option-label'><span class='{css_class}'>{sign}</span> Call (k2)</div>",
-                        unsafe_allow_html=True,
-                    )
-                    price2 = st.number_input(
-                        "",
-                        value=bs_model(s, k2, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="strangle_call_price",
-                        label_visibility="collapsed",
-                    )
-                    price3, price4 = None, None
+
                 elif strategy == "Strip":
-                    st.markdown(
-                        f"<div class='option-label'><span class='positive'>+</span> 2x Put (k)</div>",
-                        unsafe_allow_html=True,
+                    price1 = price_input(
+                        "+", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "strip_put_price", quantity=2
                     )
-                    price1 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="strip_put_price",
-                        label_visibility="collapsed",
+                    price2 = price_input(
+                        "+", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "strip_call_price"
                     )
-                    st.markdown(
-                        f"<div class='option-label'><span class='positive'>+</span> Call (k)</div>",
-                        unsafe_allow_html=True,
-                    )
-                    price2 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="strip_call_price",
-                        label_visibility="collapsed",
-                    )
-                    price3, price4 = None, None
+
                 elif strategy == "Strap":
-                    st.markdown(
-                        f"<div class='option-label'><span class='positive'>+</span> Put (k)</div>",
-                        unsafe_allow_html=True,
+                    price1 = price_input(
+                        "+", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "strap_put_price"
                     )
-                    price1 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="strap_put_price",
-                        label_visibility="collapsed",
+                    price2 = price_input(
+                        "+", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "strap_call_price", quantity=2
                     )
-                    st.markdown(
-                        f"<div class='option-label'><span class='positive'>+</span> 2x Call (k)</div>",
-                        unsafe_allow_html=True,
-                    )
-                    price2 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="strap_call_price",
-                        label_visibility="collapsed",
-                    )
-                    price3, price4 = None, None
+
                 elif strategy == "Butterfly":
-                    if option_type == "CALL":
-                        sign1 = "+" if side == "LONG" else "-"
-                        sign2 = "-" if side == "LONG" else "+"
-                        sign3 = "+" if side == "LONG" else "-"
-                        css_class1 = "positive" if side == "LONG" else "negative"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        css_class3 = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Call (k1)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="butterfly_call_price1",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> 2x Call (k2)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="butterfly_call_price2",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class3}'>{sign3}</span> Call (k3)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price3 = st.number_input(
-                            "",
-                            value=bs_model(s, k3, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="butterfly_call_price3",
-                            label_visibility="collapsed",
-                        )
-                        price4 = None
-                    else:
-                        sign1 = "+" if side == "LONG" else "-"
-                        sign2 = "-" if side == "LONG" else "+"
-                        sign3 = "+" if side == "LONG" else "-"
-                        css_class1 = "positive" if side == "LONG" else "negative"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        css_class3 = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Put (k1)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="butterfly_put_price1",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> 2x Put (k2)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="butterfly_put_price2",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class3}'>{sign3}</span> Put (k3)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price3 = st.number_input(
-                            "",
-                            value=bs_model(s, k3, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="butterfly_put_price3",
-                            label_visibility="collapsed",
-                        )
-                        price4 = None
+                    sign1 = "+" if side == "LONG" else "-"
+                    sign2 = "-" if side == "LONG" else "+"
+                    sign3 = "+" if side == "LONG" else "-"
+                    calc_type = "c" if option_type == "CALL" else "p"
+                    instrument = "Call" if option_type == "CALL" else "Put"
+                    key_prefix = "butterfly_call" if option_type == "CALL" else "butterfly_put"
+                    price1 = price_input(
+                        sign1, instrument, "k1", bs_model(s, k1, rf, tau, sigma, y, calc_type), f"{key_prefix}_price1"
+                    )
+                    price2 = price_input(
+                        sign2, instrument, "k2", bs_model(s, k2, rf, tau, sigma, y, calc_type), f"{key_prefix}_price2", quantity=2
+                    )
+                    price3 = price_input(
+                        sign3, instrument, "k3", bs_model(s, k3, rf, tau, sigma, y, calc_type), f"{key_prefix}_price3"
+                    )
+
                 elif strategy == "Condor":
-                    if option_type == "CALL":
-                        sign1 = "+" if side == "LONG" else "-"
-                        sign2 = "-" if side == "LONG" else "+"
-                        sign3 = "-" if side == "LONG" else "+"
-                        sign4 = "+" if side == "LONG" else "-"
-                        css_class1 = "positive" if side == "LONG" else "negative"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        css_class3 = "negative" if side == "LONG" else "positive"
-                        css_class4 = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Call (k1)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_call_price1",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> Call (k2)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_call_price2",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class3}'>{sign3}</span> Call (k3)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price3 = st.number_input(
-                            "",
-                            value=bs_model(s, k3, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_call_price3",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class4}'>{sign4}</span> Call (k4)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price4 = st.number_input(
-                            "",
-                            value=bs_model(s, k4, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_call_price4",
-                            label_visibility="collapsed",
-                        )
-                    else:
-                        sign1 = "+" if side == "LONG" else "-"
-                        sign2 = "-" if side == "LONG" else "+"
-                        sign3 = "-" if side == "LONG" else "+"
-                        sign4 = "+" if side == "LONG" else "-"
-                        css_class1 = "positive" if side == "LONG" else "negative"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        css_class3 = "negative" if side == "LONG" else "positive"
-                        css_class4 = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Put (k1)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_put_price1",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> Put (k2)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_put_price2",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class3}'>{sign3}</span> Put (k3)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price3 = st.number_input(
-                            "",
-                            value=bs_model(s, k3, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_put_price3",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class4}'>{sign4}</span> Put (k4)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price4 = st.number_input(
-                            "",
-                            value=bs_model(s, k4, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="condor_put_price4",
-                            label_visibility="collapsed",
-                        )
+                    sign1 = "+" if side == "LONG" else "-"
+                    sign2 = "-" if side == "LONG" else "+"
+                    sign3 = "-" if side == "LONG" else "+"
+                    sign4 = "+" if side == "LONG" else "-"
+                    calc_type = "c" if option_type == "CALL" else "p"
+                    instrument = "Call" if option_type == "CALL" else "Put"
+                    key_prefix = "condor_call" if option_type == "CALL" else "condor_put"
+                    price1 = price_input(
+                        sign1, instrument, "k1", bs_model(s, k1, rf, tau, sigma, y, calc_type), f"{key_prefix}_price1"
+                    )
+                    price2 = price_input(
+                        sign2, instrument, "k2", bs_model(s, k2, rf, tau, sigma, y, calc_type), f"{key_prefix}_price2"
+                    )
+                    price3 = price_input(
+                        sign3, instrument, "k3", bs_model(s, k3, rf, tau, sigma, y, calc_type), f"{key_prefix}_price3"
+                    )
+                    price4 = price_input(
+                        sign4, instrument, "k4", bs_model(s, k4, rf, tau, sigma, y, calc_type), f"{key_prefix}_price4"
+                    )
+
                 elif strategy == "Ladder":
                     if option_type == "CALL":
                         sign1 = "+" if side == "LONG" else "-"
                         sign2 = "-" if side == "LONG" else "+"
                         sign3 = "-" if side == "LONG" else "+"
-                        css_class1 = "positive" if side == "LONG" else "negative"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        css_class3 = "negative" if side == "LONG" else "positive"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Call (k1)</div>",
-                            unsafe_allow_html=True,
+                        price1 = price_input(
+                            sign1, "Call", "k1", bs_model(s, k1, rf, tau, sigma, y, "c"), "ladder_call_price1"
                         )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="ladder_call_price1",
-                            label_visibility="collapsed",
+                        price2 = price_input(
+                            sign2, "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "ladder_call_price2"
                         )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> Call (k2)</div>",
-                            unsafe_allow_html=True,
+                        price3 = price_input(
+                            sign3, "Call", "k3", bs_model(s, k3, rf, tau, sigma, y, "c"), "ladder_call_price3"
                         )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="ladder_call_price2",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class3}'>{sign3}</span> Call (k3)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price3 = st.number_input(
-                            "",
-                            value=bs_model(s, k3, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="ladder_call_price3",
-                            label_visibility="collapsed",
-                        )
-                        price4 = None
                     else:
                         sign1 = "-" if side == "LONG" else "+"
                         sign2 = "-" if side == "LONG" else "+"
                         sign3 = "+" if side == "LONG" else "-"
-                        css_class1 = "negative" if side == "LONG" else "positive"
-                        css_class2 = "negative" if side == "LONG" else "positive"
-                        css_class3 = "positive" if side == "LONG" else "negative"
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class1}'>{sign1}</span> Put (k1)</div>",
-                            unsafe_allow_html=True,
+                        price1 = price_input(
+                            sign1, "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "ladder_put_price1"
                         )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="ladder_put_price1",
-                            label_visibility="collapsed",
+                        price2 = price_input(
+                            sign2, "Put", "k2", bs_model(s, k2, rf, tau, sigma, y, "p"), "ladder_put_price2"
                         )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class2}'>{sign2}</span> Put (k2)</div>",
-                            unsafe_allow_html=True,
+                        price3 = price_input(
+                            sign3, "Put", "k3", bs_model(s, k3, rf, tau, sigma, y, "p"), "ladder_put_price3"
                         )
-                        price2 = st.number_input(
-                            "",
-                            value=bs_model(s, k2, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="ladder_put_price2",
-                            label_visibility="collapsed",
-                        )
-                        st.markdown(
-                            f"<div class='option-label'><span class='{css_class3}'>{sign3}</span> Put (k3)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price3 = st.number_input(
-                            "",
-                            value=bs_model(s, k3, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="ladder_put_price3",
-                            label_visibility="collapsed",
-                        )
-                        price4 = None
+
                 elif strategy == "Jade Lizard":
-                    st.markdown(
-                        f"<div class='option-label'><span class='negative'>-</span> Put (k1)</div>",
-                        unsafe_allow_html=True,
+                    price1 = price_input(
+                        "-", "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "jade_lizard_put_price"
                     )
-                    price1 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="jade_lizard_put_price",
-                        label_visibility="collapsed",
+                    price2 = price_input(
+                        "-", "Call", "k2", bs_model(s, k2, rf, tau, sigma, y, "c"), "jade_lizard_call_price1"
                     )
-                    st.markdown(
-                        f"<div class='option-label'><span class='negative'>-</span> Call (k2)</div>",
-                        unsafe_allow_html=True,
+                    price3 = price_input(
+                        "+", "Call", "k3", bs_model(s, k3, rf, tau, sigma, y, "c"), "jade_lizard_call_price2"
                     )
-                    price2 = st.number_input(
-                        "",
-                        value=bs_model(s, k2, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="jade_lizard_call_price1",
-                        label_visibility="collapsed",
-                    )
-                    st.markdown(
-                        f"<div class='option-label'><span class='positive'>+</span> Call (k3)</div>",
-                        unsafe_allow_html=True,
-                    )
-                    price3 = st.number_input(
-                        "",
-                        value=bs_model(s, k3, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="jade_lizard_call_price2",
-                        label_visibility="collapsed",
-                    )
-                    price4 = None
+
                 elif strategy == "Reverse Jade Lizard":
-                    st.markdown(
-                        f"<div class='option-label'><span class='positive'>+</span> Put (k1)</div>",
-                        unsafe_allow_html=True,
+                    price1 = price_input(
+                        "+", "Put", "k1", bs_model(s, k1, rf, tau, sigma, y, "p"), "rev_jade_lizard_put_price1"
                     )
-                    price1 = st.number_input(
-                        "",
-                        value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="rev_jade_lizard_put_price1",
-                        label_visibility="collapsed",
+                    price2 = price_input(
+                        "-", "Put", "k2", bs_model(s, k2, rf, tau, sigma, y, "p"), "rev_jade_lizard_put_price2"
                     )
-                    st.markdown(
-                        f"<div class='option-label'><span class='negative'>-</span> Put (k2)</div>",
-                        unsafe_allow_html=True,
+                    price3 = price_input(
+                        "-", "Call", "k3", bs_model(s, k3, rf, tau, sigma, y, "c"), "rev_jade_lizard_call_price"
                     )
-                    price2 = st.number_input(
-                        "",
-                        value=bs_model(s, k2, rf, tau, sigma, y, "p"),
-                        step=0.01,
-                        format="%.2f",
-                        key="rev_jade_lizard_put_price2",
-                        label_visibility="collapsed",
-                    )
-                    st.markdown(
-                        f"<div class='option-label'><span class='negative'>-</span> Call (k3)</div>",
-                        unsafe_allow_html=True,
-                    )
-                    price3 = st.number_input(
-                        "",
-                        value=bs_model(s, k3, rf, tau, sigma, y, "c"),
-                        step=0.01,
-                        format="%.2f",
-                        key="rev_jade_lizard_call_price",
-                        label_visibility="collapsed",
-                    )
-                    price4 = None
+
                 elif strategy == "Covered":
+                    price2 = s
                     if option_type == "CALL":
-                        st.markdown(
-                            f"<div class='option-label'><span class='positive'>+</span> Stock</div>",
-                            unsafe_allow_html=True,
+                        render_leg_label("+", "Stock")
+                        price1 = price_input(
+                            "-", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "covered_call_price"
                         )
-                        price2 = s
-                        st.markdown(
-                            f"<div class='option-label'><span class='negative'>-</span> Call (k)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="covered_call_price",
-                            label_visibility="collapsed",
-                        )
-                        price3, price4 = None, None
                     else:
-                        st.markdown(
-                            f"<div class='option-label'><span class='negative'>-</span> Stock</div>",
-                            unsafe_allow_html=True,
+                        render_leg_label("-", "Stock")
+                        price1 = price_input(
+                            "-", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "covered_put_price"
                         )
-                        price2 = s
-                        st.markdown(
-                            f"<div class='option-label'><span class='negative'>-</span> Put (k)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="covered_put_price",
-                            label_visibility="collapsed",
-                        )
-                        price3, price4 = None, None
+
                 elif strategy == "Protective":
+                    price2 = s
                     if option_type == "CALL":
-                        st.markdown(
-                            f"<div class='option-label'><span class='negative'>-</span> Stock</div>",
-                            unsafe_allow_html=True,
+                        render_leg_label("-", "Stock")
+                        price1 = price_input(
+                            "+", "Call", "k", bs_model(s, k1, rf, tau, sigma, y, "c"), "protective_call_price"
                         )
-                        price2 = s
-                        st.markdown(
-                            f"<div class='option-label'><span class='positive'>+</span> Call (k)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "c"),
-                            step=0.01,
-                            format="%.2f",
-                            key="protective_call_price",
-                            label_visibility="collapsed",
-                        )
-                        price3, price4 = None, None
                     else:
-                        st.markdown(
-                            f"<div class='option-label'><span class='positive'>+</span> Stock</div>",
-                            unsafe_allow_html=True,
+                        render_leg_label("+", "Stock")
+                        price1 = price_input(
+                            "+", "Put", "k", bs_model(s, k1, rf, tau, sigma, y, "p"), "protective_put_price"
                         )
-                        price2 = s
-                        st.markdown(
-                            f"<div class='option-label'><span class='positive'>+</span> Put (k)</div>",
-                            unsafe_allow_html=True,
-                        )
-                        price1 = st.number_input(
-                            "",
-                            value=bs_model(s, k1, rf, tau, sigma, y, "p"),
-                            step=0.01,
-                            format="%.2f",
-                            key="protective_put_price",
-                            label_visibility="collapsed",
-                        )
-                        price3, price4 = None, None
 
             st.markdown("---")
 

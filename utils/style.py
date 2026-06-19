@@ -72,12 +72,45 @@ def apply_parameter_styles():
         font-weight: bold;
         margin-bottom: 10px;
     }
-
     /* 옵션 레이블 스타일 */
     .option-label {
-        font-weight: bold;
-        margin-bottom: 0px !important;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        margin: 2px 0 3px 0 !important;
         padding-bottom: 0px !important;
+        white-space: nowrap;
+    }
+    .leg-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.4;
+    }
+    .leg-badge.positive {
+        color: #087a72;
+        background: rgba(28, 212, 200, 0.14);
+        border: 1px solid rgba(28, 212, 200, 0.36);
+    }
+    .leg-badge.negative {
+        color: #9a1558;
+        background: rgba(212, 28, 120, 0.12);
+        border: 1px solid rgba(212, 28, 120, 0.30);
+    }
+    .leg-name {
+        color: #1f2937;
+        font-size: 13px;
+    }
+    .leg-strike {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 600;
     }
     </style>
     """,
