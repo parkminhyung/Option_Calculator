@@ -3,6 +3,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from models.bs_model import bs_model, calculate_implied_volatility
+from models.heston_model import (
+    calibrate_heston_model,
+    heston_price,
+    heston_price_surface,
+    select_calibration_quotes,
+)
 from plotly.subplots import make_subplots
 from strategies.payoff import calculate_payoff_df
 from strategies.probability import calculate_itm_probability, calculate_win_rate
@@ -39,6 +45,83 @@ def render_leg_label(sign, instrument, strike_label=None, quantity=None):
     )
 
 
+def run_heston_calibration(
+    ticker,
+    data,
+    s,
+    rf,
+    y,
+    expiry_count=4,
+    options_per_expiry=8,
+    max_iter=80,
+    initial_params=None,
+    anchor_expiry=None,
+):
+    chains = []
+    expiry_dates = list(data["expiry_dates"])
+    start_idx = 0
+    if anchor_expiry in expiry_dates:
+        start_idx = expiry_dates.index(anchor_expiry)
+    selected_expiries = expiry_dates[start_idx : start_idx + int(expiry_count)]
+    for exp_date in selected_expiries:
+        days_to_exp = calculate_days_to_expiry(exp_date)
+        exp_calls, exp_puts = get_option_chain(ticker, exp_date)
+        if exp_calls is not None and exp_puts is not None:
+            chains.append((exp_date, days_to_exp, exp_calls, exp_puts))
+
+    quotes = select_calibration_quotes(
+        chains,
+        s,
+        max_options_per_expiry=int(options_per_expiry),
+    )
+    calibration = calibrate_heston_model(
+        quotes,
+        s,
+        rf,
+        y,
+        initial_vol=float(data.get("vol", 30.0)),
+        max_nfev=int(max_iter),
+        initial_params=initial_params,
+    )
+    calibration["ticker"] = ticker
+    calibration["underlying_price"] = s
+    calibration["risk_free_rate"] = rf
+    calibration["dividend_yield"] = y
+    calibration["expiry_count"] = int(expiry_count)
+    calibration["anchor_expiry"] = anchor_expiry
+    calibration["calibration_expiries"] = selected_expiries
+    return calibration
+
+
+def get_heston_initial_params(data, heston_result=None, ticker=None):
+    if (
+        heston_result
+        and heston_result.get("ticker") == ticker
+        and heston_result.get("params")
+    ):
+        return heston_result["params"]
+
+    initial_vol = max(float(data.get("vol", 30.0)) / 100.0, 0.01)
+    initial_var = initial_vol**2
+    return {
+        "kappa": 1.2,
+        "theta": initial_var,
+        "sigma_v": 0.6,
+        "rho": -0.35,
+        "v0": initial_var,
+    }
+
+
+def make_heston_initial_params(kappa, long_run_vol_pct, sigma_v, rho, spot_vol_pct):
+    return {
+        "kappa": float(kappa),
+        "theta": (float(long_run_vol_pct) / 100.0) ** 2,
+        "sigma_v": float(sigma_v),
+        "rho": float(rho),
+        "v0": (float(spot_vol_pct) / 100.0) ** 2,
+    }
+
+
 def main():
     # 페이지 설정
     apply_page_styles()
@@ -57,6 +140,10 @@ def main():
         st.session_state.plot_option_type = None
     if "plot_strategy" not in st.session_state:
         st.session_state.plot_strategy = None
+    if "plot_greeks" not in st.session_state:
+        st.session_state.plot_greeks = None
+    if "heston_calibration" not in st.session_state:
+        st.session_state.heston_calibration = None
 
     # Sidebar header
     st.sidebar.title("Option Calculator")
@@ -183,7 +270,15 @@ def main():
 
             apply_parameter_styles()
 
-            param_cols = st.columns(5)
+            pricing_model = st.session_state.get("pricing_model_select", "Black-Scholes")
+            heston_result = st.session_state.get("heston_calibration")
+            heston_available = (
+                heston_result is not None
+                and heston_result.get("ticker") == ticker
+                and heston_result.get("params")
+            )
+
+            param_cols = st.columns(4)
 
             with param_cols[0]:
                 s = st.number_input(
@@ -652,26 +747,47 @@ def main():
                     "Size (@100)", value=1, min_value=1, label_visibility="visible"
                 )
 
-                # Implied Volatility 필드 제거됨
-
-            # Option Prices 섹션을 4번째 컬럼으로 이동
             with param_cols[3]:
+                heston_available = heston_available and heston_result.get(
+                    "anchor_expiry", expiry
+                ) == expiry
                 st.markdown(
                     "<div class='param-label'>Option Prices</div>",
                     unsafe_allow_html=True,
-                    help="Option prices are theoretical values calculated with the Black-Scholes model using the selected underlying price, strike, expiry, risk-free rate, dividend yield, and IV.",
+                    help="Option prices are theoretical values calculated with the selected pricing model.",
                 )
+
+                def theoretical_option_price(strike, calc_type):
+                    if pricing_model == "Heston (calibrated)" and heston_available:
+                        price = heston_price(
+                            s,
+                            strike,
+                            rf,
+                            tau,
+                            y,
+                            heston_result["params"],
+                            calc_type,
+                        )
+                        if np.isfinite(price):
+                            return price
+                    return bs_model(s, strike, rf, tau, sigma, y, calc_type)
 
                 def price_input(
                     sign, instrument, strike_label, value, key, quantity=None
                 ):
+                    pricing_key = (
+                        "heston"
+                        if pricing_model == "Heston (calibrated)" and heston_available
+                        else "bs"
+                    )
+                    dynamic_key = f"{key}_{pricing_key}_{float(value):.4f}"
                     render_leg_label(sign, instrument, strike_label, quantity)
                     return st.number_input(
                         "",
                         value=value,
                         step=0.01,
                         format="%.2f",
-                        key=key,
+                        key=dynamic_key,
                         label_visibility="collapsed",
                     )
 
@@ -685,7 +801,7 @@ def main():
                             sign,
                             "Call",
                             "k",
-                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k1, "c"),
                             "single_call_price",
                         )
                     else:
@@ -693,7 +809,7 @@ def main():
                             sign,
                             "Put",
                             "k",
-                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k1, "p"),
                             "single_put_price",
                         )
 
@@ -705,14 +821,14 @@ def main():
                             sign1,
                             "Call",
                             "k1",
-                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k1, "c"),
                             "spread_call_price1",
                         )
                         price2 = price_input(
                             sign2,
                             "Call",
                             "k2",
-                            bs_model(s, k2, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k2, "c"),
                             "spread_call_price2",
                         )
                     else:
@@ -722,14 +838,14 @@ def main():
                             sign1,
                             "Put",
                             "k1",
-                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k1, "p"),
                             "spread_put_price1",
                         )
                         price2 = price_input(
                             sign2,
                             "Put",
                             "k2",
-                            bs_model(s, k2, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k2, "p"),
                             "spread_put_price2",
                         )
 
@@ -739,14 +855,14 @@ def main():
                         sign,
                         "Call",
                         "k",
-                        bs_model(s, k1, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k1, "c"),
                         "straddle_call_price",
                     )
                     price2 = price_input(
                         sign,
                         "Put",
                         "k",
-                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k1, "p"),
                         "straddle_put_price",
                     )
 
@@ -756,14 +872,14 @@ def main():
                         sign,
                         "Put",
                         "k1",
-                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k1, "p"),
                         "strangle_put_price",
                     )
                     price2 = price_input(
                         sign,
                         "Call",
                         "k2",
-                        bs_model(s, k2, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k2, "c"),
                         "strangle_call_price",
                     )
 
@@ -772,7 +888,7 @@ def main():
                         "+",
                         "Put",
                         "k",
-                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k1, "p"),
                         "strip_put_price",
                         quantity=2,
                     )
@@ -780,7 +896,7 @@ def main():
                         "+",
                         "Call",
                         "k",
-                        bs_model(s, k1, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k1, "c"),
                         "strip_call_price",
                     )
 
@@ -789,14 +905,14 @@ def main():
                         "+",
                         "Put",
                         "k",
-                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k1, "p"),
                         "strap_put_price",
                     )
                     price2 = price_input(
                         "+",
                         "Call",
                         "k",
-                        bs_model(s, k1, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k1, "c"),
                         "strap_call_price",
                         quantity=2,
                     )
@@ -814,14 +930,14 @@ def main():
                         sign1,
                         instrument,
                         "k1",
-                        bs_model(s, k1, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k1, calc_type),
                         f"{key_prefix}_price1",
                     )
                     price2 = price_input(
                         sign2,
                         instrument,
                         "k2",
-                        bs_model(s, k2, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k2, calc_type),
                         f"{key_prefix}_price2",
                         quantity=2,
                     )
@@ -829,7 +945,7 @@ def main():
                         sign3,
                         instrument,
                         "k3",
-                        bs_model(s, k3, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k3, calc_type),
                         f"{key_prefix}_price3",
                     )
 
@@ -847,28 +963,28 @@ def main():
                         sign1,
                         instrument,
                         "k1",
-                        bs_model(s, k1, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k1, calc_type),
                         f"{key_prefix}_price1",
                     )
                     price2 = price_input(
                         sign2,
                         instrument,
                         "k2",
-                        bs_model(s, k2, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k2, calc_type),
                         f"{key_prefix}_price2",
                     )
                     price3 = price_input(
                         sign3,
                         instrument,
                         "k3",
-                        bs_model(s, k3, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k3, calc_type),
                         f"{key_prefix}_price3",
                     )
                     price4 = price_input(
                         sign4,
                         instrument,
                         "k4",
-                        bs_model(s, k4, rf, tau, sigma, y, calc_type),
+                        theoretical_option_price(k4, calc_type),
                         f"{key_prefix}_price4",
                     )
 
@@ -881,21 +997,21 @@ def main():
                             sign1,
                             "Call",
                             "k1",
-                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k1, "c"),
                             "ladder_call_price1",
                         )
                         price2 = price_input(
                             sign2,
                             "Call",
                             "k2",
-                            bs_model(s, k2, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k2, "c"),
                             "ladder_call_price2",
                         )
                         price3 = price_input(
                             sign3,
                             "Call",
                             "k3",
-                            bs_model(s, k3, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k3, "c"),
                             "ladder_call_price3",
                         )
                     else:
@@ -906,21 +1022,21 @@ def main():
                             sign1,
                             "Put",
                             "k1",
-                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k1, "p"),
                             "ladder_put_price1",
                         )
                         price2 = price_input(
                             sign2,
                             "Put",
                             "k2",
-                            bs_model(s, k2, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k2, "p"),
                             "ladder_put_price2",
                         )
                         price3 = price_input(
                             sign3,
                             "Put",
                             "k3",
-                            bs_model(s, k3, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k3, "p"),
                             "ladder_put_price3",
                         )
 
@@ -929,21 +1045,21 @@ def main():
                         "-",
                         "Put",
                         "k1",
-                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k1, "p"),
                         "jade_lizard_put_price",
                     )
                     price2 = price_input(
                         "-",
                         "Call",
                         "k2",
-                        bs_model(s, k2, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k2, "c"),
                         "jade_lizard_call_price1",
                     )
                     price3 = price_input(
                         "+",
                         "Call",
                         "k3",
-                        bs_model(s, k3, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k3, "c"),
                         "jade_lizard_call_price2",
                     )
 
@@ -952,21 +1068,21 @@ def main():
                         "+",
                         "Put",
                         "k1",
-                        bs_model(s, k1, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k1, "p"),
                         "rev_jade_lizard_put_price1",
                     )
                     price2 = price_input(
                         "-",
                         "Put",
                         "k2",
-                        bs_model(s, k2, rf, tau, sigma, y, "p"),
+                        theoretical_option_price(k2, "p"),
                         "rev_jade_lizard_put_price2",
                     )
                     price3 = price_input(
                         "-",
                         "Call",
                         "k3",
-                        bs_model(s, k3, rf, tau, sigma, y, "c"),
+                        theoretical_option_price(k3, "c"),
                         "rev_jade_lizard_call_price",
                     )
 
@@ -978,7 +1094,7 @@ def main():
                             "-",
                             "Call",
                             "k",
-                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k1, "c"),
                             "covered_call_price",
                         )
                     else:
@@ -987,7 +1103,7 @@ def main():
                             "-",
                             "Put",
                             "k",
-                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k1, "p"),
                             "covered_put_price",
                         )
 
@@ -999,7 +1115,7 @@ def main():
                             "+",
                             "Call",
                             "k",
-                            bs_model(s, k1, rf, tau, sigma, y, "c"),
+                            theoretical_option_price(k1, "c"),
                             "protective_call_price",
                         )
                     else:
@@ -1008,9 +1124,167 @@ def main():
                             "+",
                             "Put",
                             "k",
-                            bs_model(s, k1, rf, tau, sigma, y, "p"),
+                            theoretical_option_price(k1, "p"),
                             "protective_put_price",
                         )
+
+            st.markdown("---")
+            st.subheader("Pricing Model")
+
+            pricing_model_cols = st.columns([1, 3])
+            with pricing_model_cols[0]:
+                pricing_model = st.selectbox(
+                    "Pricing Model",
+                    options=["Black-Scholes", "Heston (calibrated)"],
+                    key="pricing_model_select",
+                    help="Heston needs calibrated parameters. You can calibrate here without opening the 3D plot.",
+                )
+
+            with pricing_model_cols[1]:
+                if pricing_model == "Heston (calibrated)":
+                    if heston_available:
+                        st.caption(
+                            f"Calibrated: {heston_result['quotes_used']} quotes, RMSE ${heston_result['rmse']:.2f}"
+                        )
+                        calibration_expiries = heston_result.get(
+                            "calibration_expiries", []
+                        )
+                        if calibration_expiries:
+                            st.caption(
+                                "Calibration expiries: "
+                                + ", ".join(calibration_expiries[:4])
+                                + ("..." if len(calibration_expiries) > 4 else "")
+                            )
+                    else:
+                        st.caption("No Heston calibration for this ticker yet.")
+
+            if pricing_model == "Heston (calibrated)":
+                available_calc_expiries = max(
+                    1,
+                    min(
+                        8,
+                        len(data["expiry_dates"]) if "expiry_dates" in data else 1,
+                    ),
+                )
+                st.markdown("**Calibration settings**")
+                calc_settings_cols = st.columns(3)
+                with calc_settings_cols[0]:
+                    calc_heston_expiry_count = st.number_input(
+                        "Expiry count",
+                        value=min(4, available_calc_expiries),
+                        min_value=1,
+                        max_value=available_calc_expiries,
+                        step=1,
+                        key="calc_heston_expiry_count",
+                        help="Number of expiries to calibrate, starting from the selected Expiry Date.",
+                    )
+                with calc_settings_cols[1]:
+                    calc_heston_options_per_expiry = st.number_input(
+                        "Options per side/expiry",
+                        value=8,
+                        min_value=4,
+                        max_value=20,
+                        step=1,
+                        key="calc_heston_options_per_expiry",
+                    )
+                with calc_settings_cols[2]:
+                    calc_heston_max_iter = st.number_input(
+                        "Max iterations",
+                        value=80,
+                        min_value=20,
+                        max_value=300,
+                        step=10,
+                        key="calc_heston_max_iter",
+                    )
+
+                calc_initial_params = get_heston_initial_params(
+                    data, heston_result, ticker
+                )
+                st.markdown("**Initial Heston parameters**")
+                calc_param_cols = st.columns(5)
+                with calc_param_cols[0]:
+                    calc_heston_kappa = st.number_input(
+                        "Kappa",
+                        value=float(calc_initial_params["kappa"]),
+                        min_value=0.05,
+                        max_value=8.0,
+                        step=0.05,
+                        format="%.2f",
+                        key="calc_heston_kappa",
+                        help="Mean reversion speed of variance.",
+                    )
+                with calc_param_cols[1]:
+                    calc_heston_long_vol = st.number_input(
+                        "Long-run vol (%)",
+                        value=float(np.sqrt(calc_initial_params["theta"]) * 100),
+                        min_value=1.0,
+                        max_value=150.0,
+                        step=0.5,
+                        format="%.2f",
+                        key="calc_heston_long_vol",
+                        help="Square of this value is used as theta.",
+                    )
+                with calc_param_cols[2]:
+                    calc_heston_sigma_v = st.number_input(
+                        "Vol of vol",
+                        value=float(calc_initial_params["sigma_v"]),
+                        min_value=0.02,
+                        max_value=5.0,
+                        step=0.05,
+                        format="%.2f",
+                        key="calc_heston_sigma_v",
+                    )
+                with calc_param_cols[3]:
+                    calc_heston_rho = st.number_input(
+                        "Correlation rho",
+                        value=float(calc_initial_params["rho"]),
+                        min_value=-0.95,
+                        max_value=0.95,
+                        step=0.05,
+                        format="%.2f",
+                        key="calc_heston_rho",
+                    )
+                with calc_param_cols[4]:
+                    calc_heston_spot_vol = st.number_input(
+                        "Spot vol (%)",
+                        value=float(np.sqrt(calc_initial_params["v0"]) * 100),
+                        min_value=1.0,
+                        max_value=150.0,
+                        step=0.5,
+                        format="%.2f",
+                        key="calc_heston_spot_vol",
+                        help="Square of this value is used as v0.",
+                    )
+
+                if st.button("Calibrate Heston Now", key="calc_heston_button"):
+                    with st.spinner("Calibrating Heston model..."):
+                        try:
+                            calc_initial_params = make_heston_initial_params(
+                                calc_heston_kappa,
+                                calc_heston_long_vol,
+                                calc_heston_sigma_v,
+                                calc_heston_rho,
+                                calc_heston_spot_vol,
+                            )
+                            calibration = run_heston_calibration(
+                                ticker,
+                                data,
+                                s,
+                                rf,
+                                y,
+                                expiry_count=calc_heston_expiry_count,
+                                options_per_expiry=calc_heston_options_per_expiry,
+                                max_iter=calc_heston_max_iter,
+                                initial_params=calc_initial_params,
+                                anchor_expiry=expiry,
+                            )
+                            st.session_state.heston_calibration = calibration
+                            st.success(
+                                f"Heston calibrated with {calibration['quotes_used']} quotes."
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Heston calibration failed: {e}")
 
             st.markdown("---")
 
@@ -1052,8 +1326,30 @@ def main():
                         st.session_state.plot_fig = plot_option_strategy(
                             df, s, greeks, strategy_info, tau, sigma, y, rf
                         )
+                        st.session_state.plot_greeks = greeks
                     except Exception as e:
                         st.error(f"Error creating plot: {e}")
+
+            if (
+                st.session_state.plot_fig is not None
+                and st.session_state.df is not None
+                and st.session_state.strategy_info is not None
+                and st.session_state.plot_greeks != greeks
+            ):
+                try:
+                    st.session_state.plot_fig = plot_option_strategy(
+                        st.session_state.df,
+                        s,
+                        greeks,
+                        st.session_state.strategy_info,
+                        tau,
+                        sigma,
+                        y,
+                        rf,
+                    )
+                    st.session_state.plot_greeks = greeks
+                except Exception as e:
+                    st.error(f"Error updating Greek plot: {e}")
 
             # Display the saved plot if it exists
             if st.session_state.plot_fig is not None:
@@ -1847,6 +2143,402 @@ def main():
                         "Not enough data to generate put option volatility smile plot. Try selecting a ticker with more liquid options."
                     )
 
+            st.subheader("Heston Calibration 3D")
+            st.caption(
+                "Optional 3D view of calibrated Heston prices and errors. Heston pricing only needs calibration; the 3D plot is for inspection."
+            )
+
+            available_heston_expiries = max(
+                1, min(8, len(data["expiry_dates"]) if "expiry_dates" in data else 1)
+            )
+            heston_cols = st.columns(4)
+            with heston_cols[0]:
+                heston_expiry_count = st.number_input(
+                    "Calibration expiry count",
+                    value=min(4, available_heston_expiries),
+                    min_value=1,
+                    max_value=available_heston_expiries,
+                    step=1,
+                    help="Number of expiries to calibrate, starting from the selected calculator Expiry Date.",
+                )
+            with heston_cols[1]:
+                heston_options_per_expiry = st.number_input(
+                    "Options per side/expiry",
+                    value=8,
+                    min_value=4,
+                    max_value=20,
+                    step=1,
+                )
+            with heston_cols[2]:
+                heston_max_iter = st.number_input(
+                    "Max iterations",
+                    value=80,
+                    min_value=20,
+                    max_value=300,
+                    step=10,
+                )
+            with heston_cols[3]:
+                st.metric("Current ticker", ticker)
+
+            chain_heston_result = st.session_state.get("heston_calibration")
+            chain_initial_params = get_heston_initial_params(
+                data, chain_heston_result, ticker
+            )
+            with st.expander("**Initial Heston parameters**", expanded=False):
+                chain_param_cols = st.columns(5)
+                with chain_param_cols[0]:
+                    chain_heston_kappa = st.number_input(
+                        "Kappa",
+                        value=float(chain_initial_params["kappa"]),
+                        min_value=0.05,
+                        max_value=8.0,
+                        step=0.05,
+                        format="%.2f",
+                        key="chain_heston_kappa",
+                    )
+                with chain_param_cols[1]:
+                    chain_heston_long_vol = st.number_input(
+                        "Long-run vol (%)",
+                        value=float(np.sqrt(chain_initial_params["theta"]) * 100),
+                        min_value=1.0,
+                        max_value=150.0,
+                        step=0.5,
+                        format="%.2f",
+                        key="chain_heston_long_vol",
+                    )
+                with chain_param_cols[2]:
+                    chain_heston_sigma_v = st.number_input(
+                        "Vol of vol",
+                        value=float(chain_initial_params["sigma_v"]),
+                        min_value=0.02,
+                        max_value=5.0,
+                        step=0.05,
+                        format="%.2f",
+                        key="chain_heston_sigma_v",
+                    )
+                with chain_param_cols[3]:
+                    chain_heston_rho = st.number_input(
+                        "Correlation rho",
+                        value=float(chain_initial_params["rho"]),
+                        min_value=-0.95,
+                        max_value=0.95,
+                        step=0.05,
+                        format="%.2f",
+                        key="chain_heston_rho",
+                    )
+                with chain_param_cols[4]:
+                    chain_heston_spot_vol = st.number_input(
+                        "Spot vol (%)",
+                        value=float(np.sqrt(chain_initial_params["v0"]) * 100),
+                        min_value=1.0,
+                        max_value=150.0,
+                        step=0.5,
+                        format="%.2f",
+                        key="chain_heston_spot_vol",
+                    )
+
+            if st.button("Calibrate Heston Model"):
+                with st.spinner("Calibrating Heston model from option chains..."):
+                    try:
+                        chain_initial_params = make_heston_initial_params(
+                            chain_heston_kappa,
+                            chain_heston_long_vol,
+                            chain_heston_sigma_v,
+                            chain_heston_rho,
+                            chain_heston_spot_vol,
+                        )
+                        calibration = run_heston_calibration(
+                            ticker,
+                            data,
+                            s,
+                            rf,
+                            y,
+                            expiry_count=heston_expiry_count,
+                            options_per_expiry=heston_options_per_expiry,
+                            max_iter=heston_max_iter,
+                            initial_params=chain_initial_params,
+                            anchor_expiry=expiry,
+                        )
+                        st.session_state.heston_calibration = calibration
+                        st.success("Heston calibration completed.")
+                    except Exception as e:
+                        st.error(f"Heston calibration failed: {e}")
+
+            heston_result = st.session_state.get("heston_calibration")
+            if heston_result and heston_result.get("ticker") == ticker:
+                params = heston_result["params"]
+                st.markdown(
+                    """
+                    <style>
+                    .heston-metric-grid {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                        gap: 10px;
+                        margin: 8px 0 18px 0;
+                    }
+                    .heston-metric {
+                        background: #f8f9fa;
+                        border: 1px solid #e9ecef;
+                        border-radius: 6px;
+                        padding: 10px 12px;
+                        min-width: 0;
+                    }
+                    .heston-metric-label {
+                        color: #6c757d;
+                        font-size: 0.78rem;
+                        line-height: 1.2;
+                        white-space: normal;
+                    }
+                    .heston-metric-value {
+                        color: #212529;
+                        font-size: 1.14rem;
+                        font-weight: 650;
+                        line-height: 1.25;
+                        margin-top: 4px;
+                        white-space: nowrap;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                heston_metrics = [
+                    ("Kappa", f"{params['kappa']:.2f}"),
+                    ("Long-run vol", f"{np.sqrt(params['theta']) * 100:.2f}%"),
+                    ("Vol of vol", f"{params['sigma_v']:.2f}"),
+                    ("Correlation", f"{params['rho']:.2f}"),
+                    ("Spot vol", f"{np.sqrt(params['v0']) * 100:.2f}%"),
+                    ("RMSE", f"${heston_result['rmse']:.2f}"),
+                    ("MAPE", f"{heston_result['mean_abs_pct_error']:.2f}%"),
+                ]
+                metric_html = "<div class='heston-metric-grid'>"
+                for label, value in heston_metrics:
+                    metric_html += (
+                        "<div class='heston-metric'>"
+                        f"<div class='heston-metric-label'>{label}</div>"
+                        f"<div class='heston-metric-value'>{value}</div>"
+                        "</div>"
+                    )
+                metric_html += "</div>"
+                st.markdown(metric_html, unsafe_allow_html=True)
+
+                fitted_quotes = heston_result.get("fitted_quotes")
+                if fitted_quotes is not None and not fitted_quotes.empty:
+                    heston_tabs = st.tabs(["Heston Price Surface", "Calibration Error"])
+
+                    with heston_tabs[0]:
+                        try:
+                            surface_side = st.radio(
+                                "Surface option type",
+                                options=["Call", "Put"],
+                                horizontal=True,
+                                key="heston_surface_side",
+                            )
+                            surface_type = "c" if surface_side == "Call" else "p"
+                            strike_min = float(fitted_quotes["strike"].quantile(0.05))
+                            strike_max = float(fitted_quotes["strike"].quantile(0.95))
+                            day_min = int(max(fitted_quotes["days"].min(), 1))
+                            day_max = int(max(fitted_quotes["days"].max(), day_min + 1))
+                            strike_grid = np.linspace(strike_min, strike_max, 28)
+                            day_grid = np.linspace(day_min, day_max, 16).astype(int)
+
+                            price_surface = heston_price_surface(
+                                params, s, rf, y, strike_grid, day_grid, surface_type
+                            )
+                            quote_overlay = fitted_quotes[
+                                fitted_quotes["option_type"] == surface_type
+                            ]
+
+                            heston_fig = go.Figure()
+                            heston_fig.add_trace(
+                                go.Surface(
+                                    z=price_surface,
+                                    x=strike_grid,
+                                    y=day_grid,
+                                    colorscale="Reds"
+                                    if surface_type == "c"
+                                    else "Blues",
+                                    opacity=0.82,
+                                    colorbar=dict(title="Model price"),
+                                    name=f"{surface_side} model surface",
+                                    hovertemplate=(
+                                        "Strike: %{x:.2f}<br>"
+                                        "DTE: %{y}<br>"
+                                        "Model price: $%{z:.2f}<extra></extra>"
+                                    ),
+                                )
+                            )
+                            if not quote_overlay.empty:
+                                heston_fig.add_trace(
+                                    go.Scatter3d(
+                                        x=quote_overlay["strike"],
+                                        y=quote_overlay["days"],
+                                        z=quote_overlay["market_price"],
+                                        mode="markers",
+                                        name=f"{surface_side} market quotes",
+                                        marker=dict(
+                                            size=4,
+                                            color="#111827",
+                                            opacity=0.85,
+                                        ),
+                                        hovertemplate=(
+                                            "Expiry: %{text}<br>"
+                                            "Strike: %{x:.2f}<br>"
+                                            "DTE: %{y}<br>"
+                                            "Market price: $%{z:.2f}<extra></extra>"
+                                        ),
+                                        text=quote_overlay["expiry"],
+                                    )
+                                )
+                            heston_fig.update_layout(
+                                title=f"Heston Calibrated {surface_side} Price Surface",
+                                height=720,
+                                margin=dict(l=20, r=20, b=20, t=65),
+                                scene=dict(
+                                    xaxis_title="Strike Price",
+                                    yaxis_title="Days to Expiry",
+                                    zaxis_title="Option Price",
+                                    camera=dict(eye=dict(x=1.55, y=1.55, z=1.15)),
+                                    aspectmode="cube",
+                                ),
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom",
+                                    y=1.02,
+                                    xanchor="right",
+                                    x=1,
+                                ),
+                            )
+                            st.plotly_chart(heston_fig, use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"Error creating Heston price surface: {e}")
+
+                    with heston_tabs[1]:
+                        error_fig = go.Figure()
+                        call_errors = fitted_quotes[
+                            fitted_quotes["option_type"] == "c"
+                        ]
+                        put_errors = fitted_quotes[
+                            fitted_quotes["option_type"] == "p"
+                        ]
+                        if not call_errors.empty:
+                            error_fig.add_trace(
+                                go.Scatter3d(
+                                    x=call_errors["strike"],
+                                    y=call_errors["days"],
+                                    z=call_errors["pricing_error"],
+                                    mode="markers",
+                                    name="Call errors",
+                                    marker=dict(
+                                        size=6,
+                                        color=call_errors["pricing_error"],
+                                        colorscale="RdBu",
+                                        showscale=True,
+                                        colorbar=dict(title="Model - Market"),
+                                    ),
+                                    text=call_errors["expiry"],
+                                    hovertemplate=(
+                                        "Call<br>"
+                                        "Expiry: %{text}<br>"
+                                        "Strike: %{x:.2f}<br>"
+                                        "DTE: %{y}<br>"
+                                        "Error: $%{z:.2f}<extra></extra>"
+                                    ),
+                                )
+                            )
+                        if not put_errors.empty:
+                            error_fig.add_trace(
+                                go.Scatter3d(
+                                    x=put_errors["strike"],
+                                    y=put_errors["days"],
+                                    z=put_errors["pricing_error"],
+                                    mode="markers",
+                                    name="Put errors",
+                                    marker=dict(
+                                        size=6,
+                                        color=put_errors["pricing_error"],
+                                        colorscale="RdBu",
+                                        showscale=False,
+                                        symbol="diamond",
+                                    ),
+                                    text=put_errors["expiry"],
+                                    hovertemplate=(
+                                        "Put<br>"
+                                        "Expiry: %{text}<br>"
+                                        "Strike: %{x:.2f}<br>"
+                                        "DTE: %{y}<br>"
+                                        "Error: $%{z:.2f}<extra></extra>"
+                                    ),
+                                )
+                            )
+                        zero_x = [
+                            fitted_quotes["strike"].min(),
+                            fitted_quotes["strike"].max(),
+                        ]
+                        zero_y = [
+                            fitted_quotes["days"].min(),
+                            fitted_quotes["days"].max(),
+                        ]
+                        error_fig.add_trace(
+                            go.Surface(
+                                x=zero_x,
+                                y=zero_y,
+                                z=np.zeros((2, 2)),
+                                colorscale=[[0, "#6c757d"], [1, "#6c757d"]],
+                                opacity=0.18,
+                                showscale=False,
+                                name="Zero error plane",
+                                hoverinfo="skip",
+                            )
+                        )
+                        error_fig.update_layout(
+                            title="Heston Calibration Error Surface",
+                            height=660,
+                            scene=dict(
+                                xaxis_title="Strike Price",
+                                yaxis_title="Days to Expiry",
+                                zaxis_title="Model Price - Market Price",
+                                camera=dict(eye=dict(x=1.55, y=1.55, z=1.15)),
+                                aspectmode="cube",
+                            ),
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.02,
+                                xanchor="right",
+                                x=1,
+                            ),
+                            margin=dict(l=20, r=20, b=20, t=65),
+                        )
+                        st.plotly_chart(error_fig, use_container_width=True)
+
+                        display_cols = [
+                            "expiry",
+                            "days",
+                            "option_type",
+                            "strike",
+                            "market_price",
+                            "heston_price",
+                            "pricing_error",
+                        ]
+                        st.dataframe(
+                            fitted_quotes[display_cols].sort_values(
+                                ["days", "strike", "option_type"]
+                            ).style.format(
+                                {
+                                    "strike": "{:.2f}",
+                                    "market_price": "{:.2f}",
+                                    "heston_price": "{:.2f}",
+                                    "pricing_error": "{:.2f}",
+                                }
+                            ),
+                            use_container_width=True,
+                        )
+            else:
+                st.info(
+                    "No Heston calibration for this ticker yet. Run calibration above to enable Heston theoretical prices."
+                )
+
             # New section for Call and Put Volume Chart
             st.subheader("Option Volume Chart")
 
@@ -2031,6 +2723,49 @@ def main():
         - $y$ : Dividend yield
         - $τ$ : Time to maturity
         - $N(x)$ : Standard normal cumulative distribution function
+        """
+        )
+
+        st.markdown(
+            r"""
+        ### Heston Model
+
+        The app also supports a calibrated **Heston stochastic volatility model**. Unlike Black-Scholes, which assumes a single constant volatility until expiration, the Heston model treats variance itself as a random process. This makes it better suited for markets where options with different strikes and expirations trade at different implied volatilities.
+
+        Under the Heston model, the underlying price and variance evolve together:
+
+        $$dS_t = (r_f-y)S_tdt + \sqrt{v_t}S_tdW_t^S$$
+
+        $$dv_t = \kappa(\theta - v_t)dt + \sigma_v\sqrt{v_t}dW_t^v$$
+
+        $$dW_t^S dW_t^v = \rho dt$$
+
+        *where,*
+        - $S_t$ : Underlying price
+        - $v_t$ : Instantaneous variance
+        - $r_f$ : Risk-free rate
+        - $y$ : Dividend yield
+        - $\kappa$ : Speed of mean reversion in variance
+        - $\theta$ : Long-run variance level
+        - $\sigma_v$ : Volatility of volatility
+        - $\rho$ : Correlation between price shocks and variance shocks
+        - $v_0$ : Current variance
+
+        **Why Heston can be more realistic**
+
+        Black-Scholes assumes one volatility input, so it cannot naturally explain volatility smiles or skews. Heston allows volatility to move over time and allows price returns and volatility changes to be correlated. A negative $\rho$, which is common in equity markets, can produce the left-skew often seen in index and stock option surfaces.
+
+        **How this app uses Heston**
+
+        Select **Heston (calibrated)** in the calculator tab and use **Calibrate Heston Now** to estimate the five Heston parameters from liquid option-chain quotes. The selected **Expiry Date** is used as the calibration anchor, and **Expiry count** controls how many expirations starting from that anchor are included. Once calibration is complete, the option prices in **Option Prices** use the calibrated Heston model instead of Black-Scholes.
+
+        The **Heston Calibration 3D** section in the Option Chain tab is optional. It visualizes the fitted Heston theoretical price surface and the model error against market quotes, but the 3D plot is not required for pricing.
+
+        **Important limitations**
+
+        Heston prices are only as good as the calibration data. Wide bid/ask spreads, stale last prices, low volume, low open interest, very short-dated options, or sparse strike coverage can produce unstable parameters. A lower RMSE or MAPE generally indicates a better fit to the selected quotes, but it does not guarantee predictive accuracy.
+
+        In practice, Heston should be viewed as a richer theoretical pricing framework, not as a guaranteed fair value. It is most useful when compared with market prices, implied volatility surfaces, and liquidity conditions.
         """
         )
 

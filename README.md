@@ -46,6 +46,7 @@
 | **옵션 전략 시뮬레이션** | 다양한 옵션 전략의 손익 구조를 시각화 |
 | **그릭스 분석** | 델타, 감마, 베가, 세타, 로, 바나, 참 등 옵션 그릭스 계산 및 시각화 |
 | **내재 변동성 분석** | 변동성 스마일/스큐 및 3D 변동성 표면 생성 |
+| **Heston 모델 보정** | 옵션 체인으로 Heston stochastic volatility 파라미터를 보정하고 3D 이론가/오차 표면 표시 |
 | **옵션 체인 조회** | 특정 만기일에 대한 전체 옵션 체인 데이터 확인 |
 | **볼륨 차트 및 풋콜 비율** | 각 옵션의 볼륨 차트와 풋콜 비율 시각화 |
 | **고급 그릭스 추가** | 고급 옵션 분석을 위한 Vanna와 Charm 그릭스가 추가되었습니다.|
@@ -138,7 +139,9 @@ streamlit run app.py
 
 > **옵션 체인 정보와 볼륨 데이터는 yfinance 패키지에 의존하므로 일부 시장이나 종목에서는 데이터가 제한되거나 정확하지 않을 수 있습니다.**
 
-> **Option Prices 하단에 나타나는 가격은 델타 중립 내재 변동성을 사용하여 블랙숄즈모형을 기반으로 도출한 이론가격입니다. 옵션 앞 +는 매수, -는 매도를 나타냅니다. 예를 들어 - call은 콜매도를 의미하며, +2x call은 콜을 2배로 매수한다는 뜻입니다.**
+> **Option Prices 하단에 나타나는 가격은 선택한 Pricing Model을 기반으로 도출한 이론가격입니다. 기본값은 델타 중립 내재 변동성을 사용하는 블랙숄즈모형입니다. 옵션 앞 +는 매수, -는 매도를 나타냅니다. 예를 들어 - call은 콜매도를 의미하며, +2x call은 콜을 2배로 매수한다는 뜻입니다.**
+
+> **Heston 모델을 사용하려면 계산기 탭에서 Pricing Model을 Heston (calibrated)로 선택하고, Size 아래의 Calibrate Heston Now를 실행하세요. Option Chain 탭의 Heston Calibration 3D는 보정된 가격 표면과 오차를 시각적으로 확인하기 위한 선택 기능입니다. 보정 결과는 옵션 체인의 유동성, bid/ask 스프레드, 선택된 만기/행사가 범위에 크게 영향을 받습니다.**
 
 ---
 
@@ -176,6 +179,7 @@ streamlit run app.py
 | **Option Strategy Simulation** | Visualize the profit/loss structure of various option strategies |
 | **Greeks Analysis** | Calculate and visualize option Greeks including Delta, Gamma, Vega, Theta, Rho, Vanna, and Charm |
 | **Implied Volatility Analysis** | Generate volatility smiles/skews and 3D volatility surfaces |
+| **Heston Calibration** | Calibrate Heston stochastic volatility parameters from option chains and display 3D theoretical price/error surfaces |
 | **Option Chain Lookup** | View complete option chain data for specific expiry dates |
 | **Volume Chart and Put-Call Ratio** | Visualize volume chart and put-call ratio for each option |
 | **Advanced Greeks Added** | Vanna and Charm greeks have been added for sophisticated option analysis. |
@@ -530,4 +534,3 @@ streamlit run app.py
 > **オプションチェーン情報とボリュームデータはyfinanceパッケージに依存しているため、一部の市場や証券ではデータが制限されたり正確でない場合があります。**
 
 > **Option Prices下に表示される価格はデルタ中立インプライドボラティリティを使用してブラック・ショールズモデルに基づく理論価格です。オプションの前の+は買い、-は売りを示します。例えば、- callはコールの売りを意味し、+2x callはコールを2倍買うことを意味します。**
-
